@@ -1,0 +1,20 @@
+#include? "Project.local.xcconfig"
+
+DEVELOPMENT_TEAM = $(DEVELOPMENT_TEAM_OVERRIDE)
+CODE_SIGN_STYLE = Automatic
+PROVISIONING_PROFILE_SPECIFIER =
+PRODUCT_BUNDLE_IDENTIFIER = io.blacktop.Voice
+MACOSX_DEPLOYMENT_TARGET = 26.0
+SWIFT_VERSION = 6.0
+SWIFT_STRICT_CONCURRENCY = complete
+SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated
+ENABLE_HARDENED_RUNTIME = YES
+ENABLE_USER_SCRIPT_SANDBOXING = YES
+// Xcode 27's explicit-module scanner cannot resolve the C shim modules of the
+// NIO and MLX packages (CNIOPosix, CAsyncHTTPClient, _NumericsShims, ...) on
+// any incremental build, which failed `just release`, `just test`, and
+// `just say-cli` with "Clang dependency scanning failure". Disabling explicit
+// modules is the narrowest fix that works in every configuration; re-test with
+// this line removed on each new Xcode 27 seed.
+SWIFT_ENABLE_EXPLICIT_MODULES = NO
+

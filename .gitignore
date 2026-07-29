@@ -1,0 +1,26 @@
+.DS_Store
+.build/
+xcuserdata/
+OPC/
+DerivedData/
+buildServer.json
+*.local.xcconfig
+!*.local.xcconfig.example
+*.xcodeproj/*
+!Voice.xcodeproj/project.xcworkspace/
+Voice.xcodeproj/project.xcworkspace/*
+!Voice.xcodeproj/project.xcworkspace/xcshareddata/
+Voice.xcodeproj/project.xcworkspace/xcshareddata/*
+!Voice.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+Voice.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/*
+!Voice.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+
+# Local dictation benchmark corpus (personal voice recordings)
+Bench/
+
+# Agent working notes. These are excluded by the author's global gitignore too,
+# but that does not travel with a clone, so name them here as well.
+.claude/
+CLAUDE.md
+AGENTS.md
+docs/.ai/

@@ -1,0 +1,237 @@
+name: Voice
+options:
+  bundleIdPrefix: io.blacktop
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+configs:
+  Debug: debug
+  Release: release
+configFiles:
+  Debug: Configs/Project.xcconfig
+  Release: Configs/Project.xcconfig
+settings:
+  base:
+    ARCHS: arm64
+    CLANG_ENABLE_MODULES: YES
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_VERSION: "6.0"
+packages:
+  VoiceMLXRuntime:
+    path: Packages/VoiceMLXRuntime
+  swift-argument-parser:
+    url: https://github.com/apple/swift-argument-parser
+    exactVersion: 1.8.2
+targets:
+  VoiceCore:
+    type: library.static
+    platform: macOS
+    sources:
+      - Sources/VoiceCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.blacktop.Voice.core
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+        SWIFT_INSTALL_OBJC_HEADER: NO
+  VoicePlatform:
+    type: library.static
+    platform: macOS
+    sources:
+      - Sources/VoicePlatform
+    dependencies:
+      - target: VoiceCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.blacktop.Voice.platform
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+        SWIFT_INSTALL_OBJC_HEADER: NO
+  VoiceExperimental:
+    type: library.static
+    platform: macOS
+    sources:
+      - Sources/VoiceExperimental
+    dependencies:
+      - target: VoiceCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.blacktop.Voice.experimental
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+        SWIFT_INSTALL_OBJC_HEADER: NO
+  VoiceMLX:
+    type: library.static
+    platform: macOS
+    sources:
+      - Sources/VoiceMLX
+    dependencies:
+      - target: VoiceCore
+      - package: VoiceMLXRuntime
+        product: VoiceMLXRuntime
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.blacktop.Voice.mlx
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+        SWIFT_INSTALL_OBJC_HEADER: NO
+  Voice:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/VoiceApp
+    dependencies:
+      - target: VoiceCore
+      - target: VoicePlatform
+      - target: VoiceMLX
+      # VoiceMLX is a static library, so its Swift package linkage must also be
+      # present at the final application link step.
+      - package: VoiceMLXRuntime
+        product: VoiceMLXRuntime
+      # Ship the CLI inside the app so a single Voice.app carries the tool, per
+      # "Embedding a command-line tool in a sandboxed app". `executables` puts
+      # it in Contents/MacOS; codeSign re-signs it with the app's identity.
+      - target: VoiceSay
+        copy:
+          destination: executables
+        codeSign: true
+    info:
+      path: Sources/VoiceApp/Info.plist
+      properties:
+        CFBundleDisplayName: Voice
+        CFBundleName: Voice
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSApplicationCategoryType: public.app-category.productivity
+        LSUIElement: true
+        NSHighResolutionCapable: true
+        NSMicrophoneUsageDescription: Voice records audio while you hold the dictation key or explicitly record an on-device model comparison.
+        NSSpeechRecognitionUsageDescription: Voice uses the selected on-device speech recognizer to turn your speech into text.
+    settings:
+      base:
+        # Sources/VoiceApp/Voice.icon is an Icon Composer document, not an asset
+        # catalog; Xcode still selects it by name through this setting.
+        ASSETCATALOG_COMPILER_APPICON_NAME: Voice
+        CODE_SIGN_ENTITLEMENTS: Configs/Voice.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: io.blacktop.Voice
+        PRODUCT_NAME: Voice
+  VoiceBench:
+    type: tool
+    platform: macOS
+    sources:
+      - Sources/VoiceBench
+    dependencies:
+      - target: VoiceCore
+      - target: VoiceMLX
+      - package: VoiceMLXRuntime
+        product: VoiceMLXRuntime
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.blacktop.Voice.bench
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+  VoiceSay:
+    type: tool
+    platform: macOS
+    sources:
+      - Sources/VoiceSay
+    dependencies:
+      - target: VoiceCore
+      - target: VoicePlatform
+      - target: VoiceMLX
+      - package: VoiceMLXRuntime
+        product: VoiceMLXRuntime
+      - package: swift-argument-parser
+        product: ArgumentParser
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.blacktop.Voice.say
+        PRODUCT_NAME: voice-say
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+  VoiceSayTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/VoiceSayTests
+      - path: Sources/VoiceSay/VoiceSayOptions.swift
+      # Compiled in so validate(), parseVoice, and the ArgumentParser
+      # configuration are reachable from tests; a .captureForPassthrough
+      # regression here silently turned --help into speech once.
+      - path: Sources/VoiceSay/VoiceSay.swift
+    dependencies:
+      - target: VoiceMLX
+      - target: VoicePlatform
+      - target: VoiceCore
+      - package: VoiceMLXRuntime
+        product: VoiceMLXRuntime
+      - package: swift-argument-parser
+        product: ArgumentParser
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+  VoiceCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/VoiceCoreTests
+    dependencies:
+      - target: VoiceCore
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+  VoicePlatformTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/VoicePlatformTests
+    dependencies:
+      - target: VoicePlatform
+      - target: VoiceCore
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+  VoiceMLXTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/VoiceMLXTests
+    dependencies:
+      - target: VoiceMLX
+      - target: VoiceCore
+      - package: VoiceMLXRuntime
+        product: VoiceMLXRuntime
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Voice:
+    build:
+      targets:
+        Voice: all
+        # Capability probes never link into the app, but the scheme still
+        # compiles them so the target cannot rot.
+        VoiceExperimental: [build]
+        VoiceCoreTests: [test]
+        VoicePlatformTests: [test]
+        VoiceMLXTests: [test]
+        VoiceSayTests: [test]
+    test:
+      targets:
+        - VoiceCoreTests
+        - VoicePlatformTests
+        - VoiceMLXTests
+        - VoiceSayTests
+  VoiceBench:
+    build:
+      targets:
+        VoiceBench: all
+  VoiceSay:
+    build:
+      targets:
+        VoiceSay: all

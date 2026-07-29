@@ -1,0 +1,4 @@
+// Copy this file to Project.local.xcconfig for signed local builds.
+// Without this file, builds fall back to DEVELOPMENT_TEAM unset (ad-hoc/unsigned).
+DEVELOPMENT_TEAM_OVERRIDE = YOUR_TEAM_ID_HERE
+

@@ -1,0 +1,18 @@
+repos:
+  - repo: local
+    hooks:
+      - id: swift-format
+        name: swift-format lint
+        entry: xcrun swift-format lint --strict
+        language: system
+        types: [swift]
+      - id: actionlint
+        name: actionlint
+        entry: actionlint
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$
+      - id: zizmor
+        name: zizmor
+        entry: zizmor
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$

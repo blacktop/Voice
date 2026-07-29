@@ -1,0 +1,8 @@
+# actionlint validates `runs-on:` against a list of runner labels baked into the
+# binary, so labels newer than the installed actionlint are reported as unknown.
+# `xcode-27` is a real GitHub-hosted arm64 image (public preview, announced in
+# actions/runner-images#14404); CI needs it for the macOS 27 SDK. Drop this entry
+# once actionlint ships the label.
+self-hosted-runner:
+  labels:
+    - xcode-27
