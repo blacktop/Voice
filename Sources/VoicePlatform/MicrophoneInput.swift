@@ -256,12 +256,26 @@ final class MicrophoneInput: @unchecked Sendable {
         }
         // The drained tail must reach the analyzer before the stream finishes
         // or the end of a short utterance is lost.
-        if let conversion = state.1, let continuation = state.0 {
-            for input in (try? conversion.flush()) ?? [] {
+        guard let continuation = state.0 else { return }
+        guard let conversion = state.1 else {
+            continuation.finish()
+            return
+        }
+        Self.finishInputStream(continuation, flushing: conversion.flush)
+    }
+
+    static func finishInputStream(
+        _ continuation: AsyncThrowingStream<AnalyzerInput, Error>.Continuation,
+        flushing flush: () throws -> [AnalyzerInput]
+    ) {
+        do {
+            for input in try flush() {
                 continuation.yield(input)
             }
+            continuation.finish()
+        } catch {
+            continuation.finish(throwing: error)
         }
-        state.0?.finish()
     }
 
     private func consume(

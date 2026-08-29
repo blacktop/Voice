@@ -64,7 +64,9 @@ public struct WordErrorRate: Equatable, Sendable {
         var normalized = ""
         normalized.reserveCapacity(text.count)
         for character in text.lowercased() {
-            if character.isLetter || character.isNumber || character == "'" {
+            if character == "‘" || character == "’" {
+                normalized.append("'")
+            } else if character.isLetter || character.isNumber || character == "'" {
                 normalized.append(character)
             } else {
                 normalized.append(" ")

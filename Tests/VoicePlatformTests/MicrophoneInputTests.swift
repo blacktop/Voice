@@ -108,6 +108,23 @@ final class MicrophoneInputTests: XCTestCase {
         XCTAssertNoThrow(try conversion.flush())
     }
 
+    func testFlushFailureFinishesInputStreamWithError() async {
+        let pair = AsyncThrowingStream<AnalyzerInput, Error>.makeStream()
+
+        MicrophoneInput.finishInputStream(pair.continuation) {
+            throw TestFlushError.failed
+        }
+
+        do {
+            for try await _ in pair.stream {}
+            XCTFail("Expected the converter flush error to reach the input stream")
+        } catch let error as TestFlushError {
+            XCTAssertEqual(error, .failed)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     @available(macOS 27, *)
     private static func makeConversion() async throws -> AnalyzerInputConversion {
         let transcriber = DictationTranscriber(
@@ -154,4 +171,8 @@ final class MicrophoneInputTests: XCTestCase {
 
         XCTAssertLessThan(nextSourceTimestamp, convertedBufferEnd)
     }
+}
+
+private enum TestFlushError: Error {
+    case failed
 }

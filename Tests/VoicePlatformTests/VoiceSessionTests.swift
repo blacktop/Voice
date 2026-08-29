@@ -141,6 +141,124 @@ final class VoiceSessionTests: XCTestCase {
         XCTAssertEqual(agentDisconnects, 1)
     }
 
+    func testUnexpectedPlanningDisconnectTearsDownCaptureAndSpeech() async throws {
+        let recognizer = TestSpeechRecognizer(text: "keep listening")
+        let speechOutput = TestSpeechOutput()
+        let transport = TestAgentTransport(response: "Unused")
+        let session = makeSession(
+            recognizer: recognizer,
+            speechOutput: speechOutput
+        )
+        let disconnects = AsyncStream<String>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        await session.setPlanningDisconnectHandler { reason in
+            disconnects.continuation.yield(reason)
+        }
+
+        try await session.connectPlanning(
+            transport: transport,
+            configuration: configuration
+        )
+        await session.beginPlanningTurn()
+        let stopsBeforeDisconnect = await speechOutput.stopCount
+
+        await transport.simulateUnexpectedDisconnect(reason: "agent exited")
+        var observedReason: String?
+        for await reason in disconnects.stream.prefix(1) {
+            observedReason = reason
+        }
+
+        let recognitionCancellations = await recognizer.cancelCount
+        let stopsAfterDisconnect = await speechOutput.stopCount
+        XCTAssertEqual(observedReason, "agent exited")
+        XCTAssertEqual(recognitionCancellations, 1)
+        XCTAssertEqual(stopsAfterDisconnect, stopsBeforeDisconnect + 1)
+    }
+
+    func testUnexpectedPlanningDisconnectStopsActivePlayback() async throws {
+        let recognizer = TestSpeechRecognizer(text: "plan the parser")
+        let speechOutput = BlockingSpeechOutput()
+        let transport = TestAgentTransport(response: "A deliberately long response.")
+        let session = makeSession(
+            recognizer: recognizer,
+            speechOutput: speechOutput
+        )
+        let disconnects = AsyncStream<String>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        await session.setPlanningDisconnectHandler { reason in
+            disconnects.continuation.yield(reason)
+        }
+        try await session.connectPlanning(
+            transport: transport,
+            configuration: configuration
+        )
+        await session.beginPlanningTurn()
+        let finishingTurn = Task {
+            await session.endCapture()
+        }
+        await speechOutput.waitUntilSpeaking()
+
+        await transport.simulateUnexpectedDisconnect(reason: "agent exited")
+        for await _ in disconnects.stream.prefix(1) {}
+        await finishingTurn.value
+
+        let recognitionCancellations = await recognizer.cancelCount
+        let playbackInterruptions = await speechOutput.interruptionCount
+        XCTAssertEqual(recognitionCancellations, 1)
+        XCTAssertEqual(playbackInterruptions, 1)
+    }
+
+    func testStaleUnexpectedDisconnectCannotInvalidateReconnection() async throws {
+        let recognizer = BlockingFirstCancelRecognizer(text: "new connection turn")
+        let speechOutput = BlockingSpeechOutput()
+        let oldTransport = TestAgentTransport(response: "Old response")
+        let newTransport = TestAgentTransport(response: "New response")
+        let session = makeSession(
+            recognizer: recognizer,
+            speechOutput: speechOutput
+        )
+        let staleCallback = expectation(description: "stale disconnect callback")
+        staleCallback.isInverted = true
+        await session.setPlanningDisconnectHandler { _ in
+            staleCallback.fulfill()
+        }
+
+        try await session.connectPlanning(
+            transport: oldTransport,
+            configuration: configuration
+        )
+        await session.beginPlanningTurn()
+        await oldTransport.simulateUnexpectedDisconnect(reason: "old agent exited")
+        await recognizer.waitUntilFirstCancellationStarts()
+
+        await session.disconnectPlanning()
+        try await session.connectPlanning(
+            transport: newTransport,
+            configuration: configuration
+        )
+        await session.beginPlanningTurn()
+        let finishingTurn = Task {
+            await session.endCapture()
+        }
+        await speechOutput.waitUntilSpeaking()
+
+        await recognizer.finishFirstCancellation()
+        for _ in 0..<100 {
+            await Task.yield()
+        }
+        let stalePlaybackInterruptions = await speechOutput.interruptionCount
+        let stoppedNewPlayback = await session.stopSpeaking()
+        await finishingTurn.value
+
+        let newPrompts = await newTransport.prompts
+        XCTAssertEqual(newPrompts, ["New connection turn."])
+        XCTAssertEqual(stalePlaybackInterruptions, 0)
+        XCTAssertTrue(stoppedNewPlayback)
+        await fulfillment(of: [staleCallback], timeout: 0.05)
+    }
+
     func testStaleHotkeyPressCannotStartAfterNewerRelease() async throws {
         let recognizer = TestSpeechRecognizer(text: "must not start")
         let transport = TestAgentTransport(response: "Unused")
@@ -521,6 +639,51 @@ private actor BlockingShutdownRecognizer: SpeechRecognizing {
     }
 }
 
+private actor BlockingFirstCancelRecognizer: SpeechRecognizing {
+    private let text: String
+    private let firstCancellationStarted = AsyncGate()
+    private let firstCancellationRelease = AsyncGate()
+    private var shouldBlockCancellation = true
+
+    init(text: String) {
+        self.text = text
+    }
+
+    func waitUntilFirstCancellationStarts() async {
+        await firstCancellationStarted.wait()
+    }
+
+    func finishFirstCancellation() async {
+        await firstCancellationRelease.open()
+    }
+
+    func prepare(contextualStrings _: [String]) {}
+
+    func start() async throws -> AsyncThrowingStream<TranscriptEvent, Error> {
+        let pair = AsyncThrowingStream<TranscriptEvent, Error>.makeStream()
+        pair.continuation.yield(
+            TranscriptEvent(
+                text: text,
+                startTime: 0,
+                duration: 1,
+                isFinal: true,
+                confidence: 1
+            )
+        )
+        pair.continuation.finish()
+        return pair.stream
+    }
+
+    func stop() {}
+
+    func cancel() async {
+        guard shouldBlockCancellation else { return }
+        shouldBlockCancellation = false
+        await firstCancellationStarted.open()
+        await firstCancellationRelease.wait()
+    }
+}
+
 private actor AsyncGate {
     private var isOpen = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -545,12 +708,15 @@ private actor AsyncGate {
 
 private actor TestSpeechOutput: SpeechOutputting {
     private(set) var spoken: [String] = []
+    private(set) var stopCount = 0
 
     func speak(_ text: String, voiceIdentifier _: String?) {
         spoken.append(text)
     }
 
-    func stopImmediately() {}
+    func stopImmediately() {
+        stopCount += 1
+    }
 }
 
 private actor BlockingSpeechOutput: SpeechOutputting {
@@ -599,6 +765,7 @@ private actor TestAgentTransport: AgentTransport {
     private(set) var interruptionCount = 0
     private(set) var disconnectCount = 0
     private(set) var prompts: [String] = []
+    private var disconnectHandler: (@Sendable (String) -> Void)?
 
     init(
         response: String = "Test response",
@@ -635,6 +802,14 @@ private actor TestAgentTransport: AgentTransport {
 
     func interrupt() {
         interruptionCount += 1
+    }
+
+    func setDisconnectHandler(_ handler: (@Sendable (String) -> Void)?) {
+        disconnectHandler = handler
+    }
+
+    func simulateUnexpectedDisconnect(reason: String) {
+        disconnectHandler?(reason)
     }
 
     func setSessionConfiguration(

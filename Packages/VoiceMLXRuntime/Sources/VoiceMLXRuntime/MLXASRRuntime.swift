@@ -100,6 +100,18 @@ struct MLXASRTranscriptionGate {
     }
 }
 
+protocol ParakeetGenerating {
+    associatedtype Audio
+
+    var defaultGenerationParameters: STTGenerateParameters { get }
+    func generate(
+        audio: Audio,
+        generationParameters: STTGenerateParameters
+    ) -> STTOutput
+}
+
+extension ParakeetModel: ParakeetGenerating {}
+
 public actor MLXASRRuntime {
     private enum LoadedModel {
         case qwen3(Qwen3ASRModel)
@@ -266,7 +278,7 @@ public actor MLXASRRuntime {
             reportsInferenceMetrics = true
         }
         var finalOutput: STTOutput?
-        let stream: AsyncThrowingStream<STTGeneration, Error>
+        let stream: AsyncThrowingStream<STTGeneration, Error>?
         switch session.model {
         case .qwen3(let model):
             stream = model.generateStream(
@@ -298,17 +310,15 @@ public actor MLXASRRuntime {
                 )
             )
         case .parakeetTDT(let model):
-            stream = model.generateStream(
-                audio: audio,
-                generationParameters: Self.englishParameters(
-                    from: model.defaultGenerationParameters
-                )
-            )
+            finalOutput = Self.decodeParakeetTurn(model: model, audio: audio)
+            stream = nil
         }
-        for try await event in stream {
-            try Task.checkCancellation()
-            if case .result(let output) = event {
-                finalOutput = output
+        if let stream {
+            for try await event in stream {
+                try Task.checkCancellation()
+                if case .result(let output) = event {
+                    finalOutput = output
+                }
             }
         }
         try Task.checkCancellation()
@@ -330,6 +340,18 @@ public actor MLXASRRuntime {
             text: finalOutput.text.trimmingCharacters(in: .whitespacesAndNewlines),
             inferenceDuration: inferenceDuration,
             peakMemoryGB: peakMemoryGB
+        )
+    }
+
+    static func decodeParakeetTurn<Model: ParakeetGenerating>(
+        model: Model,
+        audio: Model.Audio
+    ) -> STTOutput {
+        model.generate(
+            audio: audio,
+            generationParameters: englishParameters(
+                from: model.defaultGenerationParameters
+            )
         )
     }
 

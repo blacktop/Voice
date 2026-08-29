@@ -210,7 +210,10 @@ public actor MLXSpeechOutput: SpeechOutputting {
                 )
                 for try await chunk in chunks {
                     try Task.checkCancellation()
-                    try player.enqueue(samples: chunk.samples, sampleRate: chunk.sampleRate)
+                    try await player.enqueue(
+                        samples: chunk.samples,
+                        sampleRate: chunk.sampleRate
+                    )
                     producedAudio = true
                 }
             }
@@ -307,80 +310,65 @@ public actor MLXSpeechOutput: SpeechOutputting {
 }
 
 /// Schedules Float32 mono chunks onto one AVAudioPlayerNode as they arrive.
-/// AVAudioPlayerNode invokes completion handlers on an internal queue, so all
-/// state is guarded by one lock.
+/// AVAudioPlayerNode invokes completion handlers on an internal queue, so
+/// player and buffer-credit state are independently locked.
 final class SpeechChunkPlayer: @unchecked Sendable {
+    // Enough queued chunks to hide scheduling jitter without allowing
+    // synthesis to retain an entire long response ahead of playback.
+    private static let maximumScheduledBufferCount = 4
+
     private let lock = NSLock()
+    private let bufferQueue = PlaybackBufferQueue(
+        capacity: SpeechChunkPlayer.maximumScheduledBufferCount
+    )
     private var engine: AVAudioEngine?
     private var node: AVAudioPlayerNode?
     private var format: AVAudioFormat?
-    private var pendingBuffers = 0
-    private var drainContinuation: CheckedContinuation<Void, Error>?
 
-    func enqueue(samples: [Float], sampleRate: Double) throws {
+    func enqueue(samples: [Float], sampleRate: Double) async throws {
         guard !samples.isEmpty else { return }
         let buffer = try Self.makeBuffer(samples: samples, sampleRate: sampleRate)
-        let node = try withLock { () -> AVAudioPlayerNode in
-            let node = try activeNode(for: buffer.format)
-            pendingBuffers += 1
-            return node
+        let reservation = try await bufferQueue.reserve()
+        do {
+            try withLock {
+                try Task.checkCancellation()
+                let node = try activeNode(for: buffer.format)
+                node.scheduleBuffer(
+                    buffer,
+                    at: nil,
+                    options: [],
+                    completionCallbackType: .dataPlayedBack
+                ) { [weak self] _ in
+                    self?.bufferQueue.complete(reservation)
+                }
+                node.play()
+            }
+        } catch {
+            bufferQueue.complete(reservation)
+            throw error
         }
-        node.scheduleBuffer(
-            buffer,
-            at: nil,
-            options: [],
-            completionCallbackType: .dataPlayedBack
-        ) { [weak self] _ in
-            self?.bufferCompleted()
-        }
-        node.play()
     }
 
     /// Resolves once every scheduled buffer has been played back, or throws
     /// CancellationError if stop() interrupts the wait.
     func awaitPlaybackCompletion() async throws {
-        try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<Void, Error>) in
-            let resumeImmediately: Bool = withLock {
-                if pendingBuffers == 0 {
-                    return true
-                }
-                drainContinuation = continuation
-                return false
-            }
-            if resumeImmediately {
-                continuation.resume()
-            }
-        }
+        try await bufferQueue.awaitDrain()
     }
 
     func stop() {
-        let (node, engine, continuation) = withLock {
-            let captured = (self.node, self.engine, drainContinuation)
-            drainContinuation = nil
-            pendingBuffers = 0
+        let (node, engine) = withLock {
+            let captured = (self.node, self.engine)
             self.node = nil
             self.engine = nil
             format = nil
             return captured
         }
-        // Stopping the node fires the remaining completion handlers; state was
-        // already cleared above so they are no-ops.
+        // Stopping can fire completion handlers synchronously, so invalidate
+        // their reservations before touching the node. They then stay stale
+        // even if playback restarts immediately.
+        bufferQueue.cancel()
         node?.stop()
         engine?.stop()
-        continuation?.resume(throwing: CancellationError())
-    }
-
-    private func bufferCompleted() {
-        let continuation = withLock { () -> CheckedContinuation<Void, Error>? in
-            if pendingBuffers > 0 {
-                pendingBuffers -= 1
-            }
-            guard pendingBuffers == 0, let drainContinuation else { return nil }
-            self.drainContinuation = nil
-            return drainContinuation
-        }
-        continuation?.resume()
     }
 
     /// Must be called with the lock held.

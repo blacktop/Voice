@@ -77,6 +77,20 @@ final class TranscriptionAccuracyTests: XCTestCase {
         XCTAssertEqual(wer.errorCount, 1)
     }
 
+    func testSmartApostrophesMatchASCIIApostrophes() {
+        let right = WordErrorRate.compute(
+            reference: "don’t stop",
+            hypothesis: "don't stop"
+        )
+        let left = WordErrorRate.compute(
+            reference: "‘quoted’ words",
+            hypothesis: "'quoted' words"
+        )
+
+        XCTAssertEqual(right.errorCount, 0)
+        XCTAssertEqual(left.errorCount, 0)
+    }
+
     func testAlignmentPrefersCheapestEditPath() {
         // "a b c d" vs "a c d" is one deletion, not two substitutions.
         let wer = WordErrorRate.compute(

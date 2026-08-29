@@ -77,6 +77,20 @@ struct MLXASRRuntimeTests {
     }
 
     @Test
+    func parakeetTurnUsesOnePlainDecodeAndReturnsItsFinalOutput() {
+        let model = RecordingParakeetGenerator()
+
+        let output = MLXASRRuntime.decodeParakeetTurn(
+            model: model,
+            audio: 7
+        )
+
+        #expect(output.text == "generated result")
+        #expect(model.receivedAudios == [7])
+        #expect(model.receivedLanguages == ["en"])
+    }
+
+    @Test
     func qwenTokenizerGenerationIsLocalAndDeterministic() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -115,5 +129,20 @@ struct MLXASRRuntimeTests {
         #expect(tokenIDs == [1, 2])
         #expect(root["model"] != nil)
         #expect(root["pre_tokenizer"] != nil)
+    }
+}
+
+private final class RecordingParakeetGenerator: ParakeetGenerating {
+    let defaultGenerationParameters = STTGenerateParameters(language: nil)
+    private(set) var receivedAudios: [Int] = []
+    private(set) var receivedLanguages: [String?] = []
+
+    func generate(
+        audio: Int,
+        generationParameters: STTGenerateParameters
+    ) -> STTOutput {
+        receivedAudios.append(audio)
+        receivedLanguages.append(generationParameters.language)
+        return STTOutput(text: "generated result")
     }
 }

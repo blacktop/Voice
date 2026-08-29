@@ -199,6 +199,68 @@ final class MLXSpeechOutputTests: XCTestCase {
             XCTAssertTrue(segment.hasSuffix("."), "segment must end a sentence: \(segment)")
         }
     }
+
+    func testPlaybackBufferQueueBlocksAtCapacityUntilPlaybackCompletes() async throws {
+        let queue = PlaybackBufferQueue(capacity: 2)
+        let first = try await queue.reserve()
+        let second = try await queue.reserve()
+
+        let thirdReservation = Task {
+            try await queue.reserve()
+        }
+        for _ in 0..<100 where queue.waitingProducerCount == 0 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(queue.pendingBufferCount, 2)
+        XCTAssertEqual(queue.waitingProducerCount, 1)
+
+        queue.complete(first)
+        let third = try await thirdReservation.value
+        XCTAssertEqual(queue.pendingBufferCount, 2)
+        XCTAssertEqual(queue.waitingProducerCount, 0)
+
+        queue.complete(second)
+        queue.complete(third)
+        try await queue.awaitDrain()
+        XCTAssertEqual(queue.pendingBufferCount, 0)
+    }
+
+    func testPlaybackBufferQueueCancellationReleasesBlockedProducer() async throws {
+        let queue = PlaybackBufferQueue(capacity: 1)
+        _ = try await queue.reserve()
+        let blockedReservation = Task {
+            try await queue.reserve()
+        }
+        for _ in 0..<100 where queue.waitingProducerCount == 0 {
+            await Task.yield()
+        }
+
+        queue.cancel()
+
+        do {
+            _ = try await blockedReservation.value
+            XCTFail("Expected cancellation to release the blocked producer with an error")
+        } catch is CancellationError {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertEqual(queue.pendingBufferCount, 0)
+    }
+
+    func testPlaybackBufferQueueIgnoresStoppedGenerationCompletions() async throws {
+        let queue = PlaybackBufferQueue(capacity: 1)
+        let stale = try await queue.reserve()
+        queue.cancel()
+        let current = try await queue.reserve()
+
+        queue.complete(stale)
+
+        XCTAssertEqual(queue.pendingBufferCount, 1)
+        queue.complete(current)
+        XCTAssertEqual(queue.pendingBufferCount, 0)
+    }
 }
 
 /// Suspends inside `synthesize` until `releaseSynthesis()`, and reports when it

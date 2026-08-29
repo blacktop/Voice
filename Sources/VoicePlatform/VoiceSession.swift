@@ -45,6 +45,7 @@ public actor VoiceSession {
     private var lastHistoryEventID: UInt64 = 0
     private var presentationRevision: UInt64 = 0
     private var transportGeneration: UUID?
+    private var planningTeardownGeneration: UUID?
     private var onPlanningDisconnect: (@Sendable (String) -> Void)?
     private var onPlanningConfiguration: PlanningConfigurationHandler?
     private var planningConfigurationOptions: [AgentSessionConfigurationOption] = []
@@ -367,7 +368,7 @@ public actor VoiceSession {
     /// The planning agent process died or its protocol failed while we were
     /// treating it as connected. Clear the transport so the UI stops showing
     /// "Connected" and every turn stops failing at send time.
-    private func handlePlanningTransportDisconnect(generation: UUID, reason: String) {
+    private func handlePlanningTransportDisconnect(generation: UUID, reason: String) async {
         guard generation == transportGeneration, transport != nil else { return }
         transport = nil
         transportGeneration = nil
@@ -375,12 +376,10 @@ public actor VoiceSession {
         updatePlanningConfiguration([])
         let message = "Planning agent disconnected: \(reason)"
         if isPlanningDestination {
-            recognitionTask?.cancel()
-            recognitionTask = nil
-            assembler.reset()
-            destination = nil
-            activeCaptureID = nil
-            releaseRequested = false
+            planningTeardownGeneration = generation
+            guard await tearDownPlanningTurn(guarding: generation) else { return }
+            guard planningTeardownGeneration == generation else { return }
+            planningTeardownGeneration = nil
             phase = .failed
             publish(.init(phase: .failed, message: message, isConnectedPlanning: false))
             phase = .idle
@@ -393,22 +392,20 @@ public actor VoiceSession {
     public func disconnectPlanning() async {
         let activeTransport = transport
         let pendingTransport = connectingTransport
+        let wasTearingDownPlanning = planningTeardownGeneration != nil
         transport = nil
         transportGeneration = nil
         connectingTransport = nil
         planningConnectionID = nil
+        planningTeardownGeneration = nil
         agentSession = nil
         updatePlanningConfiguration([])
 
         if isPlanningDestination {
-            activeCaptureID = nil
-            releaseRequested = false
-            recognitionTask?.cancel()
-            recognitionTask = nil
-            await recognizer.cancel()
-            await speechOutput.stopImmediately()
-            assembler.reset()
-            destination = nil
+            await tearDownPlanningTurn()
+            phase = .idle
+            publish(.idle)
+        } else if wasTearingDownPlanning {
             phase = .idle
             publish(.idle)
         } else if pendingTransport != nil || (activeCaptureID == nil && phase == .idle) {
@@ -421,6 +418,22 @@ public actor VoiceSession {
         if let pendingTransport {
             await pendingTransport.disconnect()
         }
+    }
+
+    @discardableResult
+    private func tearDownPlanningTurn(guarding generation: UUID? = nil) async -> Bool {
+        activeCaptureID = nil
+        releaseRequested = false
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        assembler.reset()
+        destination = nil
+        await recognizer.cancel()
+        if let generation, planningTeardownGeneration != generation {
+            return false
+        }
+        await speechOutput.stopImmediately()
+        return true
     }
 
     private func handlePlanningConfigurationUpdate(
