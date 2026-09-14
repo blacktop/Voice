@@ -38,11 +38,7 @@ final class MicrophoneInputTests: XCTestCase {
         guard #available(macOS 27, *) else {
             throw XCTSkip("AnalyzerInputConverter requires macOS 27")
         }
-        let transcriber = DictationTranscriber(
-            locale: Locale(identifier: "en-US"),
-            preset: .progressiveShortDictation
-        )
-        let conversion = try await AnalyzerInputConversion.make(compatibleWith: [transcriber])
+        let conversion = try await Self.makeConversion()
 
         let micFormat = try XCTUnwrap(
             AVAudioFormat(
@@ -126,9 +122,21 @@ final class MicrophoneInputTests: XCTestCase {
     }
 
     @available(macOS 27, *)
+    /// The converter derives the analyzer format from the module's installed
+    /// speech assets, so a machine without the en-US dictation model (a fresh
+    /// CI runner) cannot create one. That is an environment gap, not a
+    /// regression, so the test skips. `installedLocales` is the signal that
+    /// matches reality: `AssetInventory.status` reports only app-managed
+    /// installs and answers `supported` even where system dictation works.
     private static func makeConversion() async throws -> AnalyzerInputConversion {
+        let locale = Locale(identifier: "en-US")
+        let installed = await DictationTranscriber.installedLocales
+        guard installed.contains(where: { $0.identifier(.bcp47) == locale.identifier(.bcp47) })
+        else {
+            throw XCTSkip("en-US dictation assets are not installed on this machine")
+        }
         let transcriber = DictationTranscriber(
-            locale: Locale(identifier: "en-US"),
+            locale: locale,
             preset: .progressiveShortDictation
         )
         return try await AnalyzerInputConversion.make(compatibleWith: [transcriber])
