@@ -441,24 +441,24 @@ final class VoiceAppModel {
         if restoredSpeechBackend != .system {
             speechModelStatus = "Restoring \(restoredSpeechBackend.rawValue)…"
         }
-        // The model lives for the process lifetime. NotificationCenter retains
-        // this weak-self observer until the process exits.
-        _ = NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.refreshPermissionsAndHotkey()
+        // The model lives for the process lifetime, so these loops run until
+        // the process exits; the weak captures keep them from retaining it.
+        Task { @MainActor [weak self] in
+            let activations = NotificationCenter.default.notifications(
+                named: NSApplication.didBecomeActiveNotification
+            )
+            for await _ in activations {
+                guard let self else { return }
+                refreshPermissionsAndHotkey()
             }
         }
-        _ = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.willSleepNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.unloadMLXResourcesForSleep()
+        Task { @MainActor [weak self] in
+            let sleeps = NSWorkspace.shared.notificationCenter.notifications(
+                named: NSWorkspace.willSleepNotification
+            )
+            for await _ in sleeps {
+                guard let self else { return }
+                unloadMLXResourcesForSleep()
             }
         }
         DefaultAudioInput.observeChanges { [weak self] in

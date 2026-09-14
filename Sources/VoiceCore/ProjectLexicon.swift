@@ -52,7 +52,7 @@ public struct ProjectLexicon: Sendable {
     /// Derives ranked contextual strings without reading any project file contents.
     public func contextualStrings(in selectedProjectURL: URL) async throws -> [String] {
         let configuration = configuration
-        return try await Task.detached(priority: .utility) {
+        return try await Task(priority: .utility) { @concurrent in
             try Self.scan(selectedProjectURL, configuration: configuration)
         }.value
     }

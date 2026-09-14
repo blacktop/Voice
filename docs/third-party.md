@@ -8,10 +8,10 @@ and `just release` reject resolution that differs from that lock file.
 | Component | Pin | License |
 | --- | --- | --- |
 | [MLX Audio Swift](https://github.com/Blaizzy/mlx-audio-swift) | 0.1.3 (`d302a5c6080d2bb97bae38c7418f82abb76013b6`) | [MIT](https://github.com/Blaizzy/mlx-audio-swift/blob/d302a5c6080d2bb97bae38c7418f82abb76013b6/LICENSE) |
-| [MLX Swift](https://github.com/ml-explore/mlx-swift) | 0.31.3 (`61b9e011e09a62b489f6bd647958f1555bdf2896`) | [MIT](https://github.com/ml-explore/mlx-swift/blob/61b9e011e09a62b489f6bd647958f1555bdf2896/LICENSE) |
-| [MLX Swift LM](https://github.com/ml-explore/mlx-swift-lm) | 3.31.3 (`1c05248bb0899e2a7a4962b84d319cf12f4e12aa`) | [MIT](https://github.com/ml-explore/mlx-swift-lm/blob/1c05248bb0899e2a7a4962b84d319cf12f4e12aa/LICENSE) |
-| [Swift Hugging Face](https://github.com/huggingface/swift-huggingface) | 0.8.1 (`de01c0ab8fd537bbd8216cea7f774275178501a2`) | [Apache-2.0](https://github.com/huggingface/swift-huggingface/blob/de01c0ab8fd537bbd8216cea7f774275178501a2/LICENSE) |
-| [Swift Transformers](https://github.com/huggingface/swift-transformers) | 1.2.1 (`58c4bc11963a140358d791f678a60a2745a23146`) | [Apache-2.0](https://github.com/huggingface/swift-transformers/blob/58c4bc11963a140358d791f678a60a2745a23146/LICENSE) |
+| [MLX Swift](https://github.com/ml-explore/mlx-swift) | 0.31.6 (`0bb916c67f4b9e5c682cbe02a42c701c93ab5021`) | [MIT](https://github.com/ml-explore/mlx-swift/blob/0bb916c67f4b9e5c682cbe02a42c701c93ab5021/LICENSE) |
+| [MLX Swift LM](https://github.com/ml-explore/mlx-swift-lm) | 3.31.4 (`bd4b7434e6bdb588c7ef55706ff8904cb7fd4c57`) | [MIT](https://github.com/ml-explore/mlx-swift-lm/blob/bd4b7434e6bdb588c7ef55706ff8904cb7fd4c57/LICENSE) |
+| [Swift Hugging Face](https://github.com/huggingface/swift-huggingface) | 0.10.1 (`b5403ed09403f674601fd1123e07c5b32914d16f`) | [Apache-2.0](https://github.com/huggingface/swift-huggingface/blob/b5403ed09403f674601fd1123e07c5b32914d16f/LICENSE) |
+| [Swift Transformers](https://github.com/huggingface/swift-transformers) | 1.3.4 (`c21fdcde390313a6d98d8e33a346f2c3486c3ab0`) | [Apache-2.0](https://github.com/huggingface/swift-transformers/blob/c21fdcde390313a6d98d8e33a346f2c3486c3ab0/LICENSE) |
 
 The optional model weights are downloaded only after the user selects a model;
 they are not bundled with Voice. Every runtime download is pinned to the exact

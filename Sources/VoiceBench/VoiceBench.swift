@@ -122,12 +122,14 @@ struct VoiceBench {
             }
             let werText =
                 referenceWords > 0
-                ? String(format: "%.1f%%", 100 * Double(errors) / Double(referenceWords))
+                ? (Double(errors) / Double(referenceWords))
+                    .formatted(.percent.precision(.fractionLength(1)))
                 : "n/a"
             let rtfText =
                 rtfValues.isEmpty
                 ? "n/a"
-                : String(format: "%.2fx", rtfValues.reduce(0, +) / Double(rtfValues.count))
+                : (rtfValues.reduce(0, +) / Double(rtfValues.count))
+                    .formatted(.number.precision(.fractionLength(2))) + "x"
             let clipText =
                 failures == 0
                 ? "\(result.clips.count)" : "\(result.clips.count - failures)/\(result.clips.count)"

@@ -1,23 +1,27 @@
 import Foundation
+import Synchronization
 
 /// Transfers a fixed number of scheduled-buffer slots from playback
 /// completions back to the synthesis producer.
-final class PlaybackBufferQueue: @unchecked Sendable {
+final class PlaybackBufferQueue: Sendable {
     struct Reservation: Sendable {
         fileprivate let generation: UUID
     }
 
-    private struct Waiter {
+    private struct Waiter: Sendable {
         let id: UUID
         let continuation: CheckedContinuation<Reservation, Error>
     }
 
+    private struct State: Sendable {
+        var pendingCount = 0
+        var waiters: [Waiter] = []
+        var drainContinuation: CheckedContinuation<Void, Error>?
+        var generation = UUID()
+    }
+
     private let capacity: Int
-    private let lock = NSLock()
-    private var pendingCount = 0
-    private var waiters: [Waiter] = []
-    private var drainContinuation: CheckedContinuation<Void, Error>?
-    private var generation = UUID()
+    private let state = Mutex(State())
 
     init(capacity: Int) {
         self.capacity = max(1, capacity)
@@ -28,15 +32,15 @@ final class PlaybackBufferQueue: @unchecked Sendable {
         let reservation = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation {
                 (continuation: CheckedContinuation<Reservation, Error>) in
-                let immediateResult: Result<Reservation, Error>? = withLock {
+                let immediateResult: Result<Reservation, Error>? = state.withLock { state in
                     if Task.isCancelled {
                         return .failure(CancellationError())
                     }
-                    guard pendingCount >= capacity else {
-                        pendingCount += 1
-                        return .success(Reservation(generation: generation))
+                    guard state.pendingCount >= capacity else {
+                        state.pendingCount += 1
+                        return .success(Reservation(generation: state.generation))
                     }
-                    waiters.append(Waiter(id: id, continuation: continuation))
+                    state.waiters.append(Waiter(id: id, continuation: continuation))
                     return nil
                 }
                 if let immediateResult {
@@ -56,23 +60,23 @@ final class PlaybackBufferQueue: @unchecked Sendable {
     }
 
     func complete(_ reservation: Reservation) {
-        let (waiter, drain) = withLock {
-            () -> (
+        let (waiter, drain) = state.withLock {
+            (state: inout State) -> (
                 (CheckedContinuation<Reservation, Error>, Reservation)?,
                 CheckedContinuation<Void, Error>?
             ) in
-            guard reservation.generation == generation, pendingCount > 0 else {
+            guard reservation.generation == state.generation, state.pendingCount > 0 else {
                 return (nil, nil)
             }
-            if !waiters.isEmpty {
-                let continuation = waiters.removeFirst().continuation
-                let replacement = Reservation(generation: generation)
+            if !state.waiters.isEmpty {
+                let continuation = state.waiters.removeFirst().continuation
+                let replacement = Reservation(generation: state.generation)
                 return ((continuation, replacement), nil)
             }
-            pendingCount -= 1
-            guard pendingCount == 0 else { return (nil, nil) }
-            let drain = drainContinuation
-            drainContinuation = nil
+            state.pendingCount -= 1
+            guard state.pendingCount == 0 else { return (nil, nil) }
+            let drain = state.drainContinuation
+            state.drainContinuation = nil
             return (nil, drain)
         }
         if let (continuation, reservation) = waiter {
@@ -84,9 +88,9 @@ final class PlaybackBufferQueue: @unchecked Sendable {
     func awaitDrain() async throws {
         try await withCheckedThrowingContinuation {
             (continuation: CheckedContinuation<Void, Error>) in
-            let resumeImmediately = withLock {
-                guard pendingCount > 0 || !waiters.isEmpty else { return true }
-                drainContinuation = continuation
+            let resumeImmediately = state.withLock { state in
+                guard state.pendingCount > 0 || !state.waiters.isEmpty else { return true }
+                state.drainContinuation = continuation
                 return false
             }
             if resumeImmediately {
@@ -96,12 +100,12 @@ final class PlaybackBufferQueue: @unchecked Sendable {
     }
 
     func cancel() {
-        let (waiters, drain) = withLock {
-            let captured = (self.waiters, drainContinuation)
-            self.waiters.removeAll()
-            drainContinuation = nil
-            pendingCount = 0
-            generation = UUID()
+        let (waiters, drain) = state.withLock { state in
+            let captured = (state.waiters, state.drainContinuation)
+            state.waiters.removeAll()
+            state.drainContinuation = nil
+            state.pendingCount = 0
+            state.generation = UUID()
             return captured
         }
         for waiter in waiters {
@@ -111,26 +115,20 @@ final class PlaybackBufferQueue: @unchecked Sendable {
     }
 
     var pendingBufferCount: Int {
-        withLock { pendingCount }
+        state.withLock { $0.pendingCount }
     }
 
     var waitingProducerCount: Int {
-        withLock { waiters.count }
+        state.withLock { $0.waiters.count }
     }
 
     private func cancelWaiter(id: UUID) {
-        let continuation = withLock { () -> CheckedContinuation<Reservation, Error>? in
-            guard let index = waiters.firstIndex(where: { $0.id == id }) else {
+        let continuation = state.withLock { state -> CheckedContinuation<Reservation, Error>? in
+            guard let index = state.waiters.firstIndex(where: { $0.id == id }) else {
                 return nil
             }
-            return waiters.remove(at: index).continuation
+            return state.waiters.remove(at: index).continuation
         }
         continuation?.resume(throwing: CancellationError())
-    }
-
-    private func withLock<T>(_ body: () throws -> T) rethrows -> T {
-        lock.lock()
-        defer { lock.unlock() }
-        return try body()
     }
 }

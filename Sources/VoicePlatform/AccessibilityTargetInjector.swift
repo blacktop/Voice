@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import os
 
 public enum TargetInjectionError: LocalizedError, Sendable {
     case accessibilityPermissionRequired
@@ -35,6 +36,30 @@ public struct InputTarget: @unchecked Sendable {
     public let pid: pid_t
     fileprivate let element: AXUIElement
     fileprivate let bundleIdentifier: String?
+    fileprivate let window: AXUIElement?
+    fileprivate let fingerprint: TargetFingerprint
+}
+
+/// Identity-independent description of a focused control. Some hosts (Zed's
+/// AccessKit tree, for one) hand out a fresh accessibility element for the same
+/// text view whenever their tree updates, so `CFEqual` on the element alone
+/// reports a focus change while the caret never moved. Matching on role and an
+/// overlapping on-screen frame inside the same window identifies the same
+/// control without depending on object identity. Overlap rather than equality
+/// lets an input box grow as text arrives.
+struct TargetFingerprint: Equatable, Sendable {
+    let role: String?
+    let subrole: String?
+    let frame: CGRect?
+
+    func matches(_ other: TargetFingerprint) -> Bool {
+        guard let role, role == other.role, subrole == other.subrole,
+            let frame, let otherFrame = other.frame
+        else {
+            return false
+        }
+        return frame == otherFrame || frame.intersects(otherFrame)
+    }
 }
 
 enum TextInsertionCompatibilityPolicy {
@@ -124,6 +149,12 @@ public final class AccessibilityTargetInjector: TargetInjecting {
 
     private let allowClipboardFallback: Bool
     private var allowUnicodeEventFallback: Bool
+    private static let logger = Logger(subsystem: "io.blacktop.Voice", category: "insertion")
+
+    /// Focus queries are re-issued a few times before they count as a focus
+    /// change: a host mid-way through rebuilding its accessibility tree can
+    /// answer with no value or a messaging failure for one round trip.
+    private static let focusQueryAttempts = 3
 
     public init(
         allowUnicodeEventFallback: Bool = false,
@@ -165,32 +196,51 @@ public final class AccessibilityTargetInjector: TargetInjecting {
         let bundleIdentifier = NSRunningApplication(
             processIdentifier: pid
         )?.bundleIdentifier
+        let fingerprint = Self.fingerprint(of: element)
+        Self.logger.info(
+            """
+            captured target pid=\(pid) app=\(bundleIdentifier ?? "?", privacy: .public) \
+            role=\(fingerprint.role ?? "?", privacy: .public) \
+            frame=\(fingerprint.frame.map { "\($0)" } ?? "?", privacy: .public)
+            """
+        )
         return InputTarget(
             pid: pid,
             element: element,
-            bundleIdentifier: bundleIdentifier
+            bundleIdentifier: bundleIdentifier,
+            window: Self.elementAttribute(kAXWindowAttribute, from: element),
+            fingerprint: fingerprint
         )
     }
 
     public func insert(_ text: String, into target: InputTarget) async throws {
         guard !text.isEmpty else { return }
-        try verifyStillFocused(target)
+        let anchor = try verifyStillFocused(target, anchor: target.element).element
 
         var settable = DarwinBoolean(false)
         let settableStatus = AXUIElementIsAttributeSettable(
-            target.element,
+            anchor,
             kAXSelectedTextAttribute as CFString,
             &settable
         )
         if settableStatus == .success, settable.boolValue {
             let result = AXUIElementSetAttributeValue(
-                target.element,
+                anchor,
                 kAXSelectedTextAttribute as CFString,
                 text as CFString
             )
             if result == .success {
+                Self.logger.info("inserted \(text.count) characters via AXSelectedText")
                 return
             }
+            Self.logger.notice("AXSelectedText insertion failed: AXError \(result.rawValue)")
+        } else {
+            Self.logger.notice(
+                """
+                AXSelectedText not settable: status=\(settableStatus.rawValue) \
+                settable=\(settable.boolValue)
+                """
+            )
         }
 
         let unicodeFallbackAllowed =
@@ -200,55 +250,161 @@ public final class AccessibilityTargetInjector: TargetInjecting {
                 bundleIdentifier: target.bundleIdentifier
             )
         guard unicodeFallbackAllowed else {
+            Self.logger.error(
+                "no compatibility path for \(target.bundleIdentifier ?? "?", privacy: .public)"
+            )
             throw TargetInjectionError.insertionFailed(.attributeUnsupported)
         }
         let compatibilityText = UnicodeEventPayloadPlan.sanitizedText(text)
         if compatibilityText.isEmpty {
             return
         }
-        if try await postUnicode(compatibilityText, into: target) {
+        if try await postUnicode(compatibilityText, into: target, anchor: anchor) {
             return
         }
 
         guard allowClipboardFallback else {
+            Self.logger.error("unicode events could not be built and clipboard fallback is off")
             throw TargetInjectionError.insertionFailed(.cannotComplete)
         }
-        try await paste(compatibilityText, into: target)
+        try await paste(compatibilityText, into: target, anchor: anchor)
     }
 
-    private func verifyStillFocused(_ target: InputTarget) throws {
-        guard let application = NSRunningApplication(processIdentifier: target.pid),
-            !application.isTerminated
-        else {
-            throw TargetInjectionError.targetChanged
-        }
+    private struct VerifiedFocus {
+        let element: AXUIElement
+        let reanchored: Bool
+    }
 
+    /// Confirms the captured target still owns keyboard focus. `anchor` is the
+    /// most recent element known to be the target; when the host has replaced
+    /// the element object but the fingerprint still matches, the fresh element
+    /// is returned so later checks compare identity cheaply again.
+    private func verifyStillFocused(
+        _ target: InputTarget,
+        anchor: AXUIElement
+    ) throws -> VerifiedFocus {
+        // Liveness is proven by the focused-application pid comparison below.
+        // `NSRunningApplication(processIdentifier:)` was used here before and
+        // returned nil for a running, frontmost process mid-insertion; it is a
+        // LaunchServices lookup, not a kernel one, and must not gate delivery.
         let system = AXUIElementCreateSystemWide()
-        guard
-            let focusedApplication = Self.elementAttribute(
-                kAXFocusedApplicationAttribute,
-                from: system
+        let focusedApplication = Self.elementAttribute(
+            kAXFocusedApplicationAttribute,
+            from: system,
+            attempts: Self.focusQueryAttempts
+        )
+        guard let focusedApplication = focusedApplication.element else {
+            Self.logger.error(
+                "focused application query failed: AXError \(focusedApplication.error.rawValue)"
             )
-        else {
             throw TargetInjectionError.targetChanged
         }
         var focusedPID: pid_t = 0
         guard AXUIElementGetPid(focusedApplication, &focusedPID) == .success,
             focusedPID == target.pid
         else {
+            let name = NSRunningApplication(processIdentifier: focusedPID)?.bundleIdentifier
+            Self.logger.error(
+                """
+                focus moved from pid \(target.pid) to pid \(focusedPID) \
+                (\(name ?? "?", privacy: .public))
+                """
+            )
             throw TargetInjectionError.targetChanged
         }
-        guard
-            let focused = Self.elementAttribute(
-                kAXFocusedUIElementAttribute,
-                from: focusedApplication
-            ), CFEqual(focused, target.element)
-        else {
+        let focused = Self.elementAttribute(
+            kAXFocusedUIElementAttribute,
+            from: focusedApplication,
+            attempts: Self.focusQueryAttempts
+        )
+        guard let focused = focused.element else {
+            Self.logger.error(
+                "focused element query failed: AXError \(focused.error.rawValue)"
+            )
             throw TargetInjectionError.targetChanged
         }
+        if CFEqual(focused, anchor) {
+            return VerifiedFocus(element: anchor, reanchored: false)
+        }
+        let fingerprint = Self.fingerprint(of: focused)
+        let sameWindow = Self.sameWindow(target.window, focused)
+        guard sameWindow, fingerprint.matches(target.fingerprint) else {
+            Self.logger.error(
+                """
+                focused element changed: sameWindow=\(sameWindow) \
+                role=\(fingerprint.role ?? "?", privacy: .public) \
+                frame=\(fingerprint.frame.map { "\($0)" } ?? "?", privacy: .public) \
+                captured role=\(target.fingerprint.role ?? "?", privacy: .public) \
+                frame=\(target.fingerprint.frame.map { "\($0)" } ?? "?", privacy: .public)
+                """
+            )
+            throw TargetInjectionError.targetChanged
+        }
+        Self.logger.debug("focused element identity changed; fingerprint matched, re-anchoring")
+        return VerifiedFocus(element: focused, reanchored: true)
     }
 
-    private func paste(_ text: String, into target: InputTarget) async throws {
+    private static func sameWindow(_ window: AXUIElement?, _ element: AXUIElement) -> Bool {
+        guard let window,
+            let current = elementAttribute(kAXWindowAttribute, from: element)
+        else {
+            return false
+        }
+        return CFEqual(window, current)
+    }
+
+    private static func fingerprint(of element: AXUIElement) -> TargetFingerprint {
+        var frame: CGRect?
+        if let origin = pointAttribute(kAXPositionAttribute, from: element),
+            let size = sizeAttribute(kAXSizeAttribute, from: element)
+        {
+            frame = CGRect(origin: origin, size: size)
+        }
+        return TargetFingerprint(
+            role: stringAttribute(kAXRoleAttribute, from: element),
+            subrole: stringAttribute(kAXSubroleAttribute, from: element),
+            frame: frame
+        )
+    }
+
+    private static func stringAttribute(_ attribute: String, from element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success
+        else {
+            return nil
+        }
+        return value as? String
+    }
+
+    private static func pointAttribute(_ attribute: String, from element: AXUIElement) -> CGPoint? {
+        guard let value = axValue(attribute, from: element) else { return nil }
+        var point = CGPoint.zero
+        guard AXValueGetValue(value, .cgPoint, &point) else { return nil }
+        return point
+    }
+
+    private static func sizeAttribute(_ attribute: String, from element: AXUIElement) -> CGSize? {
+        guard let value = axValue(attribute, from: element) else { return nil }
+        var size = CGSize.zero
+        guard AXValueGetValue(value, .cgSize, &size) else { return nil }
+        return size
+    }
+
+    private static func axValue(_ attribute: String, from element: AXUIElement) -> AXValue? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+            let value, CFGetTypeID(value) == AXValueGetTypeID()
+        else {
+            return nil
+        }
+        return unsafeDowncast(value, to: AXValue.self)
+    }
+
+    private func paste(
+        _ text: String,
+        into target: InputTarget,
+        anchor: AXUIElement
+    ) async throws {
         let pasteboard = NSPasteboard.general
         let snapshot = PasteboardSnapshot(pasteboard: pasteboard)
         defer { snapshot.restore(to: pasteboard) }
@@ -256,7 +412,7 @@ public final class AccessibilityTargetInjector: TargetInjecting {
         guard pasteboard.setString(text, forType: .string) else {
             throw TargetInjectionError.insertionFailed(.cannotComplete)
         }
-        try verifyStillFocused(target)
+        _ = try verifyStillFocused(target, anchor: anchor)
         guard Self.postKey(code: 9, modifiers: .maskCommand, to: target.pid) else {
             throw TargetInjectionError.insertionFailed(.cannotComplete)
         }
@@ -267,22 +423,30 @@ public final class AccessibilityTargetInjector: TargetInjecting {
         _ attribute: String,
         from element: AXUIElement
     ) -> AXUIElement? {
-        var value: CFTypeRef?
-        guard
-            AXUIElementCopyAttributeValue(
-                element,
-                attribute as CFString,
-                &value
-            ) == .success,
-            let value,
-            CFGetTypeID(value) == AXUIElementGetTypeID()
-        else {
-            return nil
-        }
-        return unsafeDowncast(value, to: AXUIElement.self)
+        elementAttribute(attribute, from: element, attempts: 1).element
     }
 
-    private func postUnicode(_ text: String, into target: InputTarget) async throws -> Bool {
+    private static func elementAttribute(
+        _ attribute: String,
+        from element: AXUIElement,
+        attempts: Int
+    ) -> (element: AXUIElement?, error: AXError) {
+        var error = AXError.failure
+        for _ in 0..<max(attempts, 1) {
+            var value: CFTypeRef?
+            error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+            if error == .success, let value, CFGetTypeID(value) == AXUIElementGetTypeID() {
+                return (unsafeDowncast(value, to: AXUIElement.self), .success)
+            }
+        }
+        return (nil, error)
+    }
+
+    private func postUnicode(
+        _ text: String,
+        into target: InputTarget,
+        anchor: AXUIElement
+    ) async throws -> Bool {
         guard let chunks = UnicodeEventPayloadPlan.chunks(for: text),
             let source = CGEventSource(stateID: .hidSystemState),
             let eventPairs = Self.makeEventPairs(for: chunks, source: source)
@@ -290,15 +454,23 @@ public final class AccessibilityTargetInjector: TargetInjecting {
             return false
         }
 
-        var postedAny = false
+        var posted = 0
+        var reanchors = 0
+        var anchor = anchor
         do {
             try await VerifiedChunkDispatcher.dispatch(
                 eventPairs,
-                verifyTarget: { try verifyStillFocused(target) },
+                verifyTarget: {
+                    let focus = try verifyStillFocused(target, anchor: anchor)
+                    anchor = focus.element
+                    if focus.reanchored {
+                        reanchors += 1
+                    }
+                },
                 postChunk: { pair in
                     pair.down.postToPid(target.pid)
                     pair.up.postToPid(target.pid)
-                    postedAny = true
+                    posted += 1
                 },
                 pauseBetweenChunks: {
                     // Roughly 500 graphemes/second remains effectively instant
@@ -307,11 +479,18 @@ public final class AccessibilityTargetInjector: TargetInjecting {
                     try await Task.sleep(for: .milliseconds(2))
                 }
             )
-        } catch TargetInjectionError.targetChanged where postedAny {
+        } catch TargetInjectionError.targetChanged where posted > 0 {
+            Self.logger.error(
+                "target changed after \(posted) of \(eventPairs.count) unicode events"
+            )
             throw TargetInjectionError.targetChangedDuringInsertion
-        } catch is CancellationError where postedAny {
+        } catch is CancellationError where posted > 0 {
+            Self.logger.notice("cancelled after \(posted) of \(eventPairs.count) unicode events")
             throw TargetInjectionError.insertionInterrupted
         }
+        Self.logger.info(
+            "posted \(posted) unicode events to pid \(target.pid); re-anchored \(reanchors) times"
+        )
         return true
     }
 

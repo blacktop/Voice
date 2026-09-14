@@ -28,9 +28,20 @@ public final class AppleSpeechOutput: NSObject, SpeechOutputting {
         synthesizer.delegate = delegateProxy
     }
 
-    public func speak(_ text: String, voiceIdentifier: String?) async throws {
+    // `SpeechOutputting`'s requirements run on the caller's actor (Swift 6.2
+    // caller isolation), so the witnesses stay nonisolated and hop to the main
+    // actor, where AVSpeechSynthesizer must be driven.
+    public nonisolated func speak(_ text: String, voiceIdentifier: String?) async throws {
+        try await performSpeak(text, voiceIdentifier: voiceIdentifier)
+    }
+
+    public nonisolated func stopImmediately() async {
+        await performStop()
+    }
+
+    private func performSpeak(_ text: String, voiceIdentifier: String?) async throws {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        await stopImmediately()
+        performStop()
 
         let utterance = AVSpeechUtterance(string: text)
         if let voiceIdentifier,
@@ -58,12 +69,12 @@ public final class AppleSpeechOutput: NSObject, SpeechOutputting {
             }
         } onCancel: {
             Task { @MainActor [weak self] in
-                await self?.stopImmediately()
+                self?.performStop()
             }
         }
     }
 
-    public func stopImmediately() async {
+    private func performStop() {
         let continuation = completion
         completion = nil
         self.activeUtterance = nil

@@ -13,12 +13,13 @@ configFiles:
   Release: Configs/Project.xcconfig
 settings:
   base:
-    ARCHS: arm64
+    ARCHS: arm64e
     CLANG_ENABLE_MODULES: YES
     CODE_SIGN_STYLE: Automatic
     ENABLE_HARDENED_RUNTIME: YES
     MACOSX_DEPLOYMENT_TARGET: "26.0"
     SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
     SWIFT_STRICT_CONCURRENCY: complete
     SWIFT_VERSION: "6.0"
 packages:
@@ -154,6 +155,7 @@ targets:
         PRODUCT_NAME: voice-say
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
+        CODE_SIGN_ENTITLEMENTS: Configs/VoiceSay.entitlements
   VoiceSayTests:
     type: bundle.unit-test
     platform: macOS

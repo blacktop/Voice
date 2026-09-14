@@ -1,5 +1,6 @@
 import Foundation
 import VoiceCore
+import os
 
 public enum VoiceSessionRecognizerError: LocalizedError, Sendable {
     case busy
@@ -10,6 +11,7 @@ public enum VoiceSessionRecognizerError: LocalizedError, Sendable {
 }
 
 public actor VoiceSession {
+    private static let logger = Logger(subsystem: "io.blacktop.Voice", category: "session")
     public typealias PresentationHandler = @Sendable (VoicePresentation) -> Void
     public typealias PlanningConfigurationHandler =
         @Sendable ([AgentSessionConfigurationOption]) -> Void
@@ -847,6 +849,7 @@ public actor VoiceSession {
     }
 
     private func fail(_ error: Error, connected: Bool = false) {
+        Self.logger.error("turn failed: \(error.localizedDescription, privacy: .public)")
         phase = .failed
         publish(
             .init(

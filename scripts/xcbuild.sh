@@ -13,6 +13,17 @@
 # targets but does not rescue an already-poisoned cache, and package targets do
 # not read that xcconfig.
 #
+# Every invocation also passes -skipPackagePluginValidation: mlx-swift 0.31.5
+# added a CudaBuild package plugin for Linux builds, and xcodebuild refuses to
+# build any dependent target until a person approves the plugin in Xcode's UI.
+# The plugin never runs on macOS.
+#
+# MACOSX_DEPLOYMENT_TARGET is forced to the app's floor for every target,
+# packages included. Package manifests declare their own (older) floors, and a
+# package whose floor is below macOS 13 (EventSource: 12.0) is compiled without
+# class_ro_t pointer signing, which the linker then reports as a mismatch
+# against every signed object in the app.
+#
 # Usage: scripts/xcbuild.sh <xcodebuild arguments ...>
 set -euo pipefail
 
@@ -32,7 +43,7 @@ run_build() {
     # Stream output so a long build still shows progress, while keeping a copy
     # to classify the failure.
     set +e
-    xcodebuild "$@" 2>&1 | tee "$log_file"
+    xcodebuild -skipPackagePluginValidation "$@" MACOSX_DEPLOYMENT_TARGET=26.0 2>&1 | tee "$log_file"
     local status=${PIPESTATUS[0]}
     set -e
     return "$status"

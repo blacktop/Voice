@@ -192,7 +192,7 @@ public actor MLXASRRuntime {
             preparationHandler(.downloading(fraction: 0))
             let generation = UUID()
             loadGeneration = generation
-            let task = Task.detached(priority: .userInitiated) {
+            let task = Task(priority: .userInitiated) { @concurrent in
                 try Self.prepareModelStore(at: configuration.modelStoreURL)
                 let modelDirectory = try await Self.resolveSnapshot(
                     configuration: configuration,

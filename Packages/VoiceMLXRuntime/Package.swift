@@ -4,7 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "VoiceMLXRuntime",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v26)],
     products: [
         .library(name: "VoiceMLXRuntime", targets: ["VoiceMLXRuntime"])
     ],
@@ -15,19 +15,19 @@ let package = Package(
         ),
         .package(
             url: "https://github.com/ml-explore/mlx-swift.git",
-            exact: "0.31.3"
+            exact: "0.31.6"
         ),
         .package(
             url: "https://github.com/ml-explore/mlx-swift-lm.git",
-            exact: "3.31.3"
+            exact: "3.31.4"
         ),
         .package(
             url: "https://github.com/huggingface/swift-huggingface.git",
-            exact: "0.8.1"
+            exact: "0.10.1"
         ),
         .package(
             url: "https://github.com/huggingface/swift-transformers.git",
-            exact: "1.2.1"
+            exact: "1.3.4"
         ),
     ],
     targets: [
@@ -45,7 +45,9 @@ let package = Package(
                 .product(name: "Tokenizers", package: "swift-transformers"),
             ],
             swiftSettings: [
-                .unsafeFlags(["-enable-library-evolution"])
+                .unsafeFlags(["-enable-library-evolution"]),
+                .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+                .enableUpcomingFeature("InferIsolatedConformances"),
             ]
         ),
         .testTarget(

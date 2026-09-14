@@ -4,6 +4,7 @@ internal import HuggingFace
 internal import MLXAudioCore
 internal import MLXAudioTTS
 internal import MLXLMCommon
+import Synchronization
 
 public enum MLXTTSModelAccessPolicy: Sendable {
     case downloadIfNeeded
@@ -205,7 +206,7 @@ public actor MLXTTSRuntime {
             preparationHandler(.downloading(fraction: 0))
             let generation = UUID()
             loadGeneration = generation
-            let task = Task.detached(priority: .userInitiated) {
+            let task = Task(priority: .userInitiated) { @concurrent in
                 try Self.prepareModelStore(at: configuration.modelStoreURL)
                 let modelDirectory = try await Self.resolveSnapshot(
                     configuration: configuration,
@@ -291,7 +292,7 @@ public actor MLXTTSRuntime {
         let sampleRate = Double(session.model.sampleRate)
         let pair = AsyncThrowingStream<MLXTTSAudioChunk, Error>.makeStream()
         let finished = SynthesisFinishedFlag()
-        let generationTask = Task.detached(priority: .userInitiated) {
+        let generationTask = Task(priority: .userInitiated) { @concurrent in
             do {
                 let samplesStream = try Self.makeSamplesStream(
                     session: session,
@@ -327,16 +328,17 @@ public actor MLXTTSRuntime {
     /// Records that a generation task has stopped producing, set by that task
     /// itself rather than by the stream's termination handler so the answer is
     /// already correct the moment the consumer wakes from the final chunk.
-    private final class SynthesisFinishedFlag: @unchecked Sendable {
-        private let lock = NSLock()
-        private var finished = false
+    /// A class because the flag is shared between the generation task and the
+    /// runtime, and `Mutex` cannot be copied.
+    private final class SynthesisFinishedFlag: Sendable {
+        private let finished = Mutex(false)
 
         var isSet: Bool {
-            lock.withLock { finished }
+            finished.withLock { $0 }
         }
 
         func set() {
-            lock.withLock { finished = true }
+            finished.withLock { $0 = true }
         }
     }
 

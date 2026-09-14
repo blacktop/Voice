@@ -65,6 +65,12 @@ stick. Every recipe runs through `scripts/xcbuild.sh`, which recovers from an
 Xcode 27 explicit-modules bug by clearing DerivedData and rebuilding once when
 the "Clang dependency scanning failure" appears.
 
+Every build is arm64e with Hardened Runtime and the macOS 26 Enhanced Security
+suite: pointer authentication, typed allocators, and the hard-mode Memory
+Integrity Enforcement entitlements (hardened heap, checked allocations,
+read-only dyld state, platform restrictions). `just verify-security` proves
+that on the built product, and `just install-app` runs it before installing.
+
 ## First run
 
 Grant Microphone, Accessibility, and Input Monitoring from Voice's Settings.

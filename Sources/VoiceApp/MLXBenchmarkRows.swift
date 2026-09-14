@@ -64,7 +64,7 @@ struct MLXBenchmarkRows: View {
             )
             .stroke(Color.accentColor.opacity(0.11), lineWidth: 1)
         }
-        .onAppear(perform: model.refreshMLXBenchmarkModels)
+        .task { model.refreshMLXBenchmarkModels() }
     }
 }
 
@@ -92,7 +92,7 @@ private struct MLXBenchmarkControls: View {
                     "Stop and compare \(model.downloadedMLXBenchmarkModels.count) models",
                     action: model.stopAndRunMLXBenchmark
                 )
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
                 Button("Cancel", role: .cancel, action: model.cancelMLXBenchmark)
             }
         case .cancelling:

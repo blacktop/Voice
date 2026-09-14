@@ -2,15 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Deliberately unsandboxed: Voice inserts text into other apps through
-	     Accessibility and keyboard events, and launches planning-agent
-	     processes, none of which a sandboxed process can do. Everything below
-	     the microphone entitlement is the Enhanced Security / Memory Integrity
-	     Enforcement hard-mode suite, which does not depend on the sandbox. -->
+	<!-- The embedded voice-say CLI runs the same MLX runtime as the app and
+	     carries the same Enhanced Security / Memory Integrity Enforcement
+	     hard-mode suite. It only plays audio, so no microphone entitlement. -->
 	<key>com.apple.security.app-sandbox</key>
 	<false/>
-	<key>com.apple.security.device.audio-input</key>
-	<true/>
 	<key>com.apple.security.hardened-process</key>
 	<true/>
 	<key>com.apple.security.hardened-process.checked-allocations</key>

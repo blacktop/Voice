@@ -213,7 +213,7 @@ struct VoiceSay: AsyncParsableCommand {
         let message: String
         switch stage {
         case .downloading(let fraction):
-            message = String(format: "downloading %.0f%%", fraction * 100)
+            message = "downloading \(fraction.formatted(.percent.precision(.fractionLength(0))))"
         case .loading:
             message = "loading model"
         case .ready:

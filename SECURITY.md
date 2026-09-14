@@ -27,6 +27,18 @@ worth attention:
 
 Speech, audio, and transcripts stay on the machine; see `docs/privacy.md`.
 
+## Runtime hardening
+
+Voice ships as an arm64e app with Hardened Runtime and Xcode 27's Enhanced
+Security version 2: pointer authentication, typed allocators, stack zero-init,
+bounds-safe C++ buffers, and the hard-mode Memory Integrity Enforcement
+entitlements (`com.apple.security.hardened-process.*`: hardened heap, checked
+allocations with pure-data, read-only dyld state, platform restrictions). It
+carries no JIT, unsigned-executable-memory, library-validation, or DYLD
+environment exceptions. The app is deliberately not sandboxed because it
+inserts text into other apps through Accessibility and launches planning-agent
+processes. `just verify-security` audits a built app for all of the above.
+
 Out of scope: the behavior of the third-party model checkpoints themselves,
 findings that require the attacker to already have code execution as the user,
 and issues in dependencies that should be reported upstream.

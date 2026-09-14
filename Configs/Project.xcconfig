@@ -8,8 +8,29 @@ MACOSX_DEPLOYMENT_TARGET = 26.0
 SWIFT_VERSION = 6.0
 SWIFT_STRICT_CONCURRENCY = complete
 SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated
-ENABLE_HARDENED_RUNTIME = YES
+SWIFT_APPROACHABLE_CONCURRENCY = YES
 ENABLE_USER_SCRIPT_SANDBOXING = YES
+
+// Hardened Runtime plus the macOS 26 Enhanced Security suite: pointer
+// authentication (arm64e), typed allocators, stack zero-init, bounds-safe C++
+// buffers, and the hard-mode Memory Integrity Enforcement entitlements in
+// Configs/Voice.entitlements. Package targets (MLX, NIO) do not read this file,
+// but ARCHS=arm64e applies to the whole build and the entitlements harden the
+// whole process. `just verify-security` audits the built product.
+ENABLE_HARDENED_RUNTIME = YES
+ENABLE_ENHANCED_SECURITY = YES
+ENABLE_POINTER_AUTHENTICATION = YES
+CLANG_ENABLE_C_TYPED_ALLOCATOR_SUPPORT = YES
+CLANG_ENABLE_CPLUSPLUS_TYPED_ALLOCATOR_SUPPORT = YES
+CLANG_ENABLE_STACK_ZERO_INIT = YES
+ENABLE_CPLUSPLUS_BOUNDS_SAFE_BUFFERS = YES
+ENABLE_SECURITY_COMPILER_WARNINGS = YES
+ENABLE_APP_SANDBOX = NO
+
+// Development-signed Release builds otherwise inherit get-task-allow from the
+// injected base entitlements; a debuggable process is not a hardened one.
+// Debug keeps the injection so the debugger and tests still attach.
+CODE_SIGN_INJECT_BASE_ENTITLEMENTS[config=Release] = NO
 // Xcode 27's explicit-module scanner cannot resolve the C shim modules of the
 // NIO and MLX packages (CNIOPosix, CAsyncHTTPClient, _NumericsShims, ...) on
 // any incremental build, which failed `just release`, `just test`, and
