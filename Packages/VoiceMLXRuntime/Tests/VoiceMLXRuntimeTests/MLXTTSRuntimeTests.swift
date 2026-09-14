@@ -6,6 +6,25 @@ import Testing
 @Suite
 struct MLXTTSRuntimeTests {
     @Test
+    func modelTypeIsReadFromTheSnapshotConfiguration() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("voice-tts-model-type-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configuration = #"{"model_type": "breeze_tts", "sample_rate": 24000}"#
+        try configuration.write(
+            to: directory.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        #expect(try MLXTTSRuntime.modelType(in: directory) == "breeze_tts")
+        #expect(throws: (any Error).self) {
+            try MLXTTSRuntime.modelType(in: directory.appendingPathComponent("missing"))
+        }
+    }
+
+    @Test
     func snapshotPolicyCoversNestedTokenizerFilesAndAccessModes() {
         // fnmatch without FNM_PATHNAME lets `*` cross `/`, so these three
         // patterns must also cover the checkpoint's speech_tokenizer/ files.

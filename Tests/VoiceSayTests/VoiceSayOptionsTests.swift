@@ -20,6 +20,50 @@ final class VoiceSayOptionsTests: XCTestCase {
         VoiceSayOptions(overrides: overrides, defaults: defaults)
     }
 
+    func testBreezeEngineSelectsTheSingleBreezeCheckpoint() {
+        var breezeDefaults = appDefaults
+        breezeDefaults.family = .breeze
+        breezeDefaults.description = "a narrator"
+        let inherited = resolve(defaults: breezeDefaults)
+        XCTAssertEqual(inherited.family, .breeze)
+        XCTAssertEqual(inherited.checkpoint, .breezeExperimental)
+        XCTAssertEqual(inherited.configuration, .designed(description: "a narrator"))
+
+        let described = resolve(
+            VoiceSayOverrides(family: .breeze, description: "a narrator"),
+            defaults: appDefaults
+        )
+        XCTAssertEqual(described.checkpoint, .breezeExperimental)
+
+        // The described voice carries over, so Qwen3-TTS serves it with VoiceDesign.
+        let backToQwen = resolve(VoiceSayOverrides(family: .qwen3), defaults: breezeDefaults)
+        XCTAssertEqual(backToQwen.checkpoint, .voiceDesignLarge)
+    }
+
+    func testBreezeWithAnInheritedPresetVoiceIsRejected() {
+        var breezeDefaults = appDefaults
+        breezeDefaults.family = .breeze
+        let inheritedPreset = resolve(defaults: breezeDefaults)
+        XCTAssertThrowsError(try inheritedPreset.validated()) { error in
+            XCTAssertEqual(error as? VoiceSayOptionsError, .presetUnsupportedByBreeze)
+        }
+
+        let described = resolve(
+            VoiceSayOverrides(family: .breeze, description: "a narrator"),
+            defaults: appDefaults
+        )
+        XCTAssertNoThrow(try described.validated())
+
+        let qwenPreset = resolve(defaults: appDefaults)
+        XCTAssertNoThrow(try qwenPreset.validated())
+    }
+
+    func testAppPreferenceMapsBreezeIdentifier() {
+        XCTAssertEqual(MLXSpeechBackendPreference(rawValue: "breeze-tts-2-4bit")?.family, .breeze)
+        XCTAssertEqual(MLXSpeechBackendPreference(rawValue: "qwen3-tts-1.7b-8bit")?.family, .qwen3)
+        XCTAssertEqual(MLXSpeechBackendPreference(rawValue: "qwen3-tts-1.7b-8bit")?.tier, .large)
+    }
+
     func testNoOverridesUsesTheAppsVoiceAndTier() {
         let options = resolve(defaults: appDefaults)
         XCTAssertEqual(options.tier, .large)

@@ -21,7 +21,15 @@ public enum MLXVoiceConfiguration: Equatable, Sendable {
     case cloned(referenceAudioURL: URL, transcript: String, style: String?)
 }
 
-/// Opt-in local Qwen3-TTS checkpoints. Selecting one downloads the pinned
+/// The model architecture behind a checkpoint. Qwen3-TTS has built-in preset
+/// speakers and streams audio while decoding; Breeze TTS 2 defines every voice
+/// from a description or a reference clip and returns each utterance whole.
+public enum MLXSpeechModelFamily: String, Sendable {
+    case qwen3
+    case breeze
+}
+
+/// Opt-in local speech checkpoints. Selecting one downloads the pinned
 /// snapshot from Hugging Face; synthesis then runs entirely on this Mac.
 public enum MLXSpeechCheckpoint: String, CaseIterable, Identifiable, Sendable {
     case customVoiceSmall
@@ -29,8 +37,22 @@ public enum MLXSpeechCheckpoint: String, CaseIterable, Identifiable, Sendable {
     case baseSmall
     case baseLarge
     case voiceDesignLarge
+    /// Breeze TTS 2 3.5B at 4-bit: first among open-weight models on the
+    /// Artificial Analysis speech arena (Aug 2026). One checkpoint serves every
+    /// voice mode. Experimental: the loader is pinned to an untagged commit and
+    /// the weights are licensed for research and non-commercial use only.
+    case breezeExperimental
 
     public var id: String { rawValue }
+
+    public var family: MLXSpeechModelFamily {
+        switch self {
+        case .customVoiceSmall, .customVoiceLarge, .baseSmall, .baseLarge, .voiceDesignLarge:
+            .qwen3
+        case .breezeExperimental:
+            .breeze
+        }
+    }
 
     /// VoiceDesign ships only as a 1.7B checkpoint, so described voices ignore
     /// the selected tier.
@@ -60,6 +82,8 @@ public enum MLXSpeechCheckpoint: String, CaseIterable, Identifiable, Sendable {
             "Qwen3-TTS 1.7B Base · 8-bit"
         case .voiceDesignLarge:
             "Qwen3-TTS 1.7B VoiceDesign · 8-bit"
+        case .breezeExperimental:
+            "Breeze TTS 2 3.5B · 4-bit (experimental)"
         }
     }
 
@@ -75,6 +99,8 @@ public enum MLXSpeechCheckpoint: String, CaseIterable, Identifiable, Sendable {
             "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"
         case .voiceDesignLarge:
             "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit"
+        case .breezeExperimental:
+            "mlx-community/Breeze-TTS-2-mlx-4bit"
         }
     }
 
@@ -91,6 +117,8 @@ public enum MLXSpeechCheckpoint: String, CaseIterable, Identifiable, Sendable {
             "e7dd0585652209fa0d7783659aad4e8a324de11c"
         case .voiceDesignLarge:
             "f90d617701d9f7f4ca499291e0b57f2b3c2fd2ee"
+        case .breezeExperimental:
+            "3a06d26b172ea4ae1da2f42d708383e9c79d5526"
         }
     }
 
@@ -100,11 +128,13 @@ public enum MLXSpeechCheckpoint: String, CaseIterable, Identifiable, Sendable {
             "about 1.1 GB"
         case .customVoiceLarge, .baseLarge, .voiceDesignLarge:
             "about 2.4 GB"
+        case .breezeExperimental:
+            "about 3.0 GB"
         }
     }
 }
 
-/// The checkpoints' built-in English speakers.
+/// The Qwen3-TTS checkpoints' built-in English speakers.
 public enum MLXSpeechVoice: String, CaseIterable, Identifiable, Sendable {
     case ryan = "Ryan"
     case aiden = "Aiden"
@@ -112,13 +142,30 @@ public enum MLXSpeechVoice: String, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
 
     public var displayName: String { rawValue }
+
+    /// Breeze TTS 2 has no preset speakers; the app seeds a described voice
+    /// from this when switching engines away from a preset.
+    public var designInstruction: String {
+        switch self {
+        case .ryan:
+            "A calm, clear adult male English narrator"
+        case .aiden:
+            "A warm, friendly adult male English voice"
+        }
+    }
 }
 
-public enum MLXSpeechOutputError: LocalizedError, Sendable {
+public enum MLXSpeechOutputError: LocalizedError, Sendable, Equatable {
     case noAudioProduced
+    case presetVoiceUnsupported(MLXSpeechCheckpoint)
 
     public var errorDescription: String? {
-        "The MLX voice finished without producing audio."
+        switch self {
+        case .noAudioProduced:
+            "The MLX voice finished without producing audio."
+        case .presetVoiceUnsupported(let checkpoint):
+            "\(checkpoint.displayName) has no preset speakers; describe or clone a voice."
+        }
     }
 }
 
@@ -134,12 +181,13 @@ protocol MLXTTSRuntimeServing: Sendable {
 
 extension MLXTTSRuntime: MLXTTSRuntimeServing {}
 
-/// Speaks text through a local Qwen3-TTS model. Generation is streamed, so
+/// Speaks text through a local MLX speech model. Generation is streamed, so
 /// playback of the first audio chunk overlaps synthesis of the rest.
 public actor MLXSpeechOutput: SpeechOutputting {
     public typealias PreparationHandler = @Sendable (MLXModelPreparationStage) -> Void
 
     private let runtime: any MLXTTSRuntimeServing
+    private let checkpoint: MLXSpeechCheckpoint
     private let player = SpeechChunkPlayer()
     private var configuration: MLXVoiceConfiguration
     private var speakTask: Task<Void, Error>?
@@ -151,6 +199,7 @@ public actor MLXSpeechOutput: SpeechOutputting {
         onPreparation: @escaping PreparationHandler = { _ in }
     ) {
         self.configuration = configuration
+        self.checkpoint = checkpoint
         runtime = MLXTTSRuntime(
             configuration: MLXTTSConfiguration(
                 repositoryID: checkpoint.repositoryID,
@@ -165,10 +214,12 @@ public actor MLXSpeechOutput: SpeechOutputting {
 
     init(
         runtime: any MLXTTSRuntimeServing,
-        configuration: MLXVoiceConfiguration
+        configuration: MLXVoiceConfiguration,
+        checkpoint: MLXSpeechCheckpoint = .customVoiceSmall
     ) {
         self.runtime = runtime
         self.configuration = configuration
+        self.checkpoint = checkpoint
     }
 
     /// Downloads the pinned snapshot if needed and loads it into memory.
@@ -187,6 +238,9 @@ public actor MLXSpeechOutput: SpeechOutputting {
     public func speak(_ text: String, voiceIdentifier _: String?) async throws {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if checkpoint.family == .breeze, case .preset = configuration {
+            throw MLXSpeechOutputError.presetVoiceUnsupported(checkpoint)
+        }
         await stopImmediately()
 
         let token = UUID()
@@ -262,7 +316,7 @@ public actor MLXSpeechOutput: SpeechOutputting {
     }
 
     /// Builds the runtime request for a configuration. A preset with a style
-    /// becomes "Ryan, calm and slow." per the checkpoint's prompt convention.
+    /// becomes "Ryan, calm and slow." per the Qwen3-TTS prompt convention.
     static func voiceRequest(
         for configuration: MLXVoiceConfiguration
     ) -> MLXTTSVoiceRequest {

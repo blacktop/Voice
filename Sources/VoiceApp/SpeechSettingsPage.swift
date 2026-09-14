@@ -169,7 +169,7 @@ private struct SpokenResponseSettingsCard: View {
     var body: some View {
         VoiceSectionCard(
             "Spoken responses",
-            detail: "System speech is the default; Qwen3-TTS remains fully local and opt in.",
+            detail: "System speech is the default; the MLX voices are fully local and opt in.",
             systemImage: "speaker.wave.2"
         ) {
             Picker("Speech engine", selection: speechBackendBinding) {
@@ -228,7 +228,7 @@ private struct MLXVoiceControls: View {
 
     var body: some View {
         Picker("Voice mode", selection: mlxVoiceModeBinding) {
-            ForEach(VoiceAppModel.MLXVoiceMode.allCases) { mode in
+            ForEach(model.selectedSpeechBackend.supportedVoiceModes) { mode in
                 Text(mode.rawValue).tag(mode)
             }
         }
@@ -255,10 +255,17 @@ private struct MLXVoiceControls: View {
             )
             .lineLimit(2...4)
             .onSubmit(model.applyMLXVoiceSettings)
-            VoiceSupportingText(
-                "Designed voices always use the 1.7B VoiceDesign model, regardless of "
-                    + "the speech tier selected above."
-            )
+            if model.selectedSpeechBackend == .breeze {
+                VoiceSupportingText(
+                    "Breeze TTS 2 designs every voice from this description. Include the "
+                        + "language, accent, pace, and tone you want."
+                )
+            } else {
+                VoiceSupportingText(
+                    "Designed voices always use the 1.7B VoiceDesign model, regardless of "
+                        + "the speech tier selected above."
+                )
+            }
         case .cloned:
             LabeledContent("Reference clip") {
                 Text(model.mlxCloneReferenceURL?.lastPathComponent ?? "Not selected")

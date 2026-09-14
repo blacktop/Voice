@@ -9,9 +9,12 @@ let package = Package(
         .library(name: "VoiceMLXRuntime", targets: ["VoiceMLXRuntime"])
     ],
     dependencies: [
+        // Pinned to a main commit rather than a tag: Breeze TTS 2 support
+        // (#255, 2026-09-02) has not been tagged yet. Move back to `exact:`
+        // at the next release that includes it.
         .package(
             url: "https://github.com/Blaizzy/mlx-audio-swift.git",
-            exact: "0.1.3"
+            revision: "d20cbd660424c9f202363306ef4ff4595a199356"
         ),
         .package(
             url: "https://github.com/ml-explore/mlx-swift.git",

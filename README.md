@@ -135,6 +135,13 @@ local Qwen3-TTS voices in two tiers, fast 0.6B (~1.1 GB) and higher-quality
 - **Clone from audio**: zero-shot cloning from a clean 3–10 second clip plus
   its exact transcript. An optional style can steer the clone's delivery.
 
+An experimental fourth engine, Breeze TTS 2 (3.5B, 4-bit, ~3.0 GB), ranks first
+among open-weight models on the Artificial Analysis speech arena. It supports
+the same three modes with one checkpoint (preset names become voice
+descriptions), returns each utterance whole rather than streaming, and its
+weights are licensed for research and non-commercial use only. `voice-say
+--engine breeze` selects it from the command line.
+
 Generation streams, so playback starts before the response finishes
 synthesizing. Reference clips are conditioned in memory and never leave the
 Mac.

@@ -7,7 +7,7 @@ and `just release` reject resolution that differs from that lock file.
 
 | Component | Pin | License |
 | --- | --- | --- |
-| [MLX Audio Swift](https://github.com/Blaizzy/mlx-audio-swift) | 0.1.3 (`d302a5c6080d2bb97bae38c7418f82abb76013b6`) | [MIT](https://github.com/Blaizzy/mlx-audio-swift/blob/d302a5c6080d2bb97bae38c7418f82abb76013b6/LICENSE) |
+| [MLX Audio Swift](https://github.com/Blaizzy/mlx-audio-swift) | main `d20cbd660424c9f202363306ef4ff4595a199356` (2026-09-02, untagged; first commit with Breeze TTS 2) | [MIT](https://github.com/Blaizzy/mlx-audio-swift/blob/d20cbd660424c9f202363306ef4ff4595a199356/LICENSE) |
 | [MLX Swift](https://github.com/ml-explore/mlx-swift) | 0.31.6 (`0bb916c67f4b9e5c682cbe02a42c701c93ab5021`) | [MIT](https://github.com/ml-explore/mlx-swift/blob/0bb916c67f4b9e5c682cbe02a42c701c93ab5021/LICENSE) |
 | [MLX Swift LM](https://github.com/ml-explore/mlx-swift-lm) | 3.31.4 (`bd4b7434e6bdb588c7ef55706ff8904cb7fd4c57`) | [MIT](https://github.com/ml-explore/mlx-swift-lm/blob/bd4b7434e6bdb588c7ef55706ff8904cb7fd4c57/LICENSE) |
 | [Swift Hugging Face](https://github.com/huggingface/swift-huggingface) | 0.10.1 (`b5403ed09403f674601fd1123e07c5b32914d16f`) | [Apache-2.0](https://github.com/huggingface/swift-huggingface/blob/b5403ed09403f674601fd1123e07c5b32914d16f/LICENSE) |
@@ -29,6 +29,7 @@ snapshot listed below:
 | [Qwen3-TTS-12Hz-0.6B-Base-8bit](https://huggingface.co/mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit/tree/50f45ef0047cde7e84c2ef04326acb8ada2436a7) | `50f45ef0047cde7e84c2ef04326acb8ada2436a7` | about 1.1 GB | [Apache-2.0](https://huggingface.co/mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit/blob/50f45ef0047cde7e84c2ef04326acb8ada2436a7/README.md) |
 | [Qwen3-TTS-12Hz-1.7B-Base-8bit](https://huggingface.co/mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit/tree/e7dd0585652209fa0d7783659aad4e8a324de11c) | `e7dd0585652209fa0d7783659aad4e8a324de11c` | about 2.4 GB | [Apache-2.0](https://huggingface.co/mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit/blob/e7dd0585652209fa0d7783659aad4e8a324de11c/README.md) |
 | [Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit](https://huggingface.co/mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit/tree/f90d617701d9f7f4ca499291e0b57f2b3c2fd2ee) | `f90d617701d9f7f4ca499291e0b57f2b3c2fd2ee` | about 2.4 GB | [Apache-2.0](https://huggingface.co/mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit/blob/f90d617701d9f7f4ca499291e0b57f2b3c2fd2ee/README.md) |
+| [Breeze-TTS-2-mlx-4bit](https://huggingface.co/mlx-community/Breeze-TTS-2-mlx-4bit/tree/3a06d26b172ea4ae1da2f42d708383e9c79d5526) | `3a06d26b172ea4ae1da2f42d708383e9c79d5526` | about 3.0 GB | [BreezeBlue Research and Non-Commercial License](https://huggingface.co/mlx-community/Breeze-TTS-2-mlx-4bit/blob/3a06d26b172ea4ae1da2f42d708383e9c79d5526/LICENSE) (weights; the inference code is Apache-2.0) |
 
 The source package lock and model revisions serve different purposes: the lock
 freezes build inputs, while the model revisions freeze runtime downloads. Model
@@ -37,6 +38,11 @@ throughput values across these model cards use different corpora, hardware,
 precision, and decoding implementations. They are not directly comparable to
 Voice's microphone path; every candidate must be measured from the same local
 audio on the same Mac before drawing a speed or accuracy conclusion.
+
+Breeze TTS 2 is the one checkpoint whose weights are not under an open-source
+license: BreezeBlue permits research and non-commercial use only, and commercial
+use needs written authorization from RESONIA, INC. Voice never redistributes
+weights, so the obligation falls on whoever downloads and uses the checkpoint.
 
 Before distributing Voice, include the license notices required by the complete
 resolved dependency graph in the app bundle and release materials. This file is

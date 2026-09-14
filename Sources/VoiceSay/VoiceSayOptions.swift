@@ -6,6 +6,7 @@ import VoicePlatform
 /// in the same voice as Voice itself, and reuses the checkpoint the app has
 /// already downloaded, instead of pulling a second one.
 struct VoiceSayDefaults: Equatable {
+    var family: MLXSpeechModelFamily = .qwen3
     var tier: MLXSpeechModelTier = .small
     var voice: MLXSpeechVoice = .ryan
     var style: String?
@@ -34,6 +35,7 @@ struct VoiceSayDefaults: Equatable {
         if let identifier = preferences.speechBackendIdentifier,
             let backend = MLXSpeechBackendPreference(rawValue: identifier)
         {
+            defaults.family = backend.family
             defaults.tier = backend.tier
         }
         if let name = preferences.mlxSpeechVoiceIdentifier,
@@ -67,14 +69,23 @@ struct VoiceSayDefaults: Equatable {
 }
 
 /// Mirrors the app's speech-backend identifiers so the CLI can map a stored
-/// preference onto a tier without depending on the app target.
+/// preference onto an engine and tier without depending on the app target.
 enum MLXSpeechBackendPreference: String {
     case small = "qwen3-tts-0.6b-8bit"
     case large = "qwen3-tts-1.7b-8bit"
+    case breeze = "breeze-tts-2-4bit"
 
+    var family: MLXSpeechModelFamily {
+        switch self {
+        case .small, .large: .qwen3
+        case .breeze: .breeze
+        }
+    }
+
+    /// Breeze has one checkpoint; the tier only matters for Qwen3-TTS.
     var tier: MLXSpeechModelTier {
         switch self {
-        case .small: .small
+        case .small, .breeze: .small
         case .large: .large
         }
     }
@@ -84,6 +95,7 @@ enum MLXSpeechBackendPreference: String {
 /// setting", which is what makes a bare invocation match the app.
 struct VoiceSayOverrides: Equatable {
     var voice: MLXSpeechVoice?
+    var family: MLXSpeechModelFamily?
     var tier: MLXSpeechModelTier?
     var style: String?
     var description: String?
@@ -94,10 +106,12 @@ struct VoiceSayOverrides: Equatable {
 /// The resolved voice for one invocation. Separated from argument parsing so
 /// the precedence rules are testable without loading a multi-gigabyte model.
 struct VoiceSayOptions: Equatable {
+    let family: MLXSpeechModelFamily
     let tier: MLXSpeechModelTier
     let configuration: MLXVoiceConfiguration
 
     init(overrides: VoiceSayOverrides, defaults: VoiceSayDefaults) {
+        family = overrides.family ?? defaults.family
         tier = overrides.tier ?? defaults.tier
         let style = overrides.style ?? defaults.style
 
@@ -130,9 +144,36 @@ struct VoiceSayOptions: Equatable {
         }
     }
 
-    /// Described voices only exist as the 1.7B VoiceDesign checkpoint, so the
-    /// tier does not apply there.
+    /// Rejects combinations the engine cannot serve. Breeze TTS 2 has no
+    /// preset speakers, and a preset can still arrive here from the app's
+    /// stored voice when only `--engine breeze` was passed.
+    func validated() throws -> VoiceSayOptions {
+        if family == .breeze, case .preset = configuration {
+            throw VoiceSayOptionsError.presetUnsupportedByBreeze
+        }
+        return self
+    }
+
+    /// Described Qwen3-TTS voices only exist as the 1.7B VoiceDesign checkpoint,
+    /// so the tier does not apply there; Breeze has a single checkpoint.
     var checkpoint: MLXSpeechCheckpoint {
-        MLXSpeechCheckpoint.checkpoint(tier: tier, configuration: configuration)
+        switch family {
+        case .qwen3:
+            MLXSpeechCheckpoint.checkpoint(tier: tier, configuration: configuration)
+        case .breeze:
+            .breezeExperimental
+        }
+    }
+}
+
+enum VoiceSayOptionsError: LocalizedError, Equatable {
+    case presetUnsupportedByBreeze
+
+    var errorDescription: String? {
+        switch self {
+        case .presetUnsupportedByBreeze:
+            "Breeze TTS 2 has no preset speakers. Describe a voice with --describe, "
+                + "clone one with --clone, or choose --engine qwen3."
+        }
     }
 }

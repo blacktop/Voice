@@ -80,6 +80,37 @@ final class MLXSpeechOutputTests: XCTestCase {
         }
     }
 
+    func testCheckpointFamilies() {
+        for checkpoint in MLXSpeechCheckpoint.allCases {
+            switch checkpoint {
+            case .breezeExperimental:
+                XCTAssertEqual(checkpoint.family, .breeze)
+            case .customVoiceSmall, .customVoiceLarge, .baseSmall, .baseLarge, .voiceDesignLarge:
+                XCTAssertEqual(checkpoint.family, .qwen3)
+            }
+        }
+    }
+
+    func testBreezeRejectsPresetVoicesBeforeSynthesizing() async {
+        let runtime = RecordingMLXTTSRuntime()
+        let output = MLXSpeechOutput(
+            runtime: runtime,
+            configuration: .preset(.ryan, style: nil),
+            checkpoint: .breezeExperimental
+        )
+
+        do {
+            try await output.speak("hello", voiceIdentifier: nil)
+            XCTFail("Expected a preset voice to be rejected on Breeze")
+        } catch let error as MLXSpeechOutputError {
+            XCTAssertEqual(error, .presetVoiceUnsupported(.breezeExperimental))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        let requested = await runtime.requestedTexts
+        XCTAssertTrue(requested.isEmpty, "Nothing should reach the runtime")
+    }
+
     func testVoiceRequestAssembly() {
         let plain = MLXSpeechOutput.voiceRequest(for: .preset(.ryan, style: nil))
         XCTAssertEqual(plain.voiceInstruction, "Ryan")

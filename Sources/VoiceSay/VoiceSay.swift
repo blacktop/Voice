@@ -43,6 +43,15 @@ struct VoiceSay: AsyncParsableCommand {
     )
     var tier: String?
 
+    @Option(
+        name: .long,
+        help: """
+            Speech engine. Breeze TTS 2 is experimental, has no preset speakers \
+            (use --describe or --clone), and ignores --tier.
+            """
+    )
+    var engine: Engine?
+
     @Option(name: .long, help: "Delivery style, for example \"calm and unhurried\".")
     var style: String?
 
@@ -85,6 +94,19 @@ struct VoiceSay: AsyncParsableCommand {
         if let tier, MLXSpeechModelTier(rawValue: tier.lowercased()) == nil {
             throw ValidationError("Unknown tier '\(tier)'. Use small or large.")
         }
+        if engine == .breeze {
+            if voice != nil {
+                throw ValidationError(
+                    "Breeze TTS 2 has no preset speakers, so --voice does not apply. "
+                        + "Describe a voice with --describe or clone one with --clone."
+                )
+            }
+            if tier != nil {
+                throw ValidationError(
+                    "--tier selects a Qwen3-TTS size and does not apply to --engine breeze."
+                )
+            }
+        }
         if let clone {
             let transcript = cloneTranscript?.trimmingCharacters(in: .whitespacesAndNewlines)
             guard let transcript, !transcript.isEmpty else {
@@ -108,9 +130,10 @@ struct VoiceSay: AsyncParsableCommand {
             return
         }
 
-        let options = VoiceSayOptions(
+        let options = try VoiceSayOptions(
             overrides: VoiceSayOverrides(
                 voice: voice.flatMap(Self.parseVoice),
+                family: engine?.family,
                 tier: tier.flatMap { MLXSpeechModelTier(rawValue: $0.lowercased()) },
                 style: style,
                 description: describe,
@@ -118,7 +141,7 @@ struct VoiceSay: AsyncParsableCommand {
                 cloneTranscript: cloneTranscript
             ),
             defaults: .fromAppPreferences()
-        )
+        ).validated()
 
         // The app persists voice settings before validating them, so an
         // inherited clone can carry an unusable clip or empty transcript.
@@ -277,6 +300,20 @@ struct VoiceSay: AsyncParsableCommand {
     private static func parseVoice(_ name: String) -> MLXSpeechVoice? {
         MLXSpeechVoice.allCases.first {
             $0.rawValue.caseInsensitiveCompare(name) == .orderedSame
+        }
+    }
+}
+
+/// `--engine` values. A CLI-local type rather than `MLXSpeechModelFamily` so
+/// the argument spelling can stay stable if the model families are renamed.
+enum Engine: String, CaseIterable, ExpressibleByArgument {
+    case qwen3
+    case breeze
+
+    var family: MLXSpeechModelFamily {
+        switch self {
+        case .qwen3: .qwen3
+        case .breeze: .breeze
         }
     }
 }

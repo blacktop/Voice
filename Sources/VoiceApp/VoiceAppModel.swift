@@ -119,17 +119,35 @@ final class VoiceAppModel {
         case system = "System (Apple)"
         case qwenSmall = "MLX · Qwen3-TTS 0.6B (fast)"
         case qwenLarge = "MLX · Qwen3-TTS 1.7B (quality)"
+        case breeze = "MLX · Breeze TTS 2 (experimental)"
 
         var id: Self { self }
 
-        var mlxTier: MLXSpeechModelTier? {
+        var isMLX: Bool { self != .system }
+
+        /// Breeze TTS 2 has no built-in speakers, so it offers only described
+        /// and cloned voices.
+        var supportedVoiceModes: [MLXVoiceMode] {
+            switch self {
+            case .system, .qwenSmall, .qwenLarge:
+                MLXVoiceMode.allCases
+            case .breeze:
+                [.designed, .cloned]
+            }
+        }
+
+        /// The checkpoint that serves a voice configuration on this backend.
+        /// Qwen3-TTS ships a variant per voice mode and tier; Breeze uses one.
+        func mlxCheckpoint(for configuration: MLXVoiceConfiguration) -> MLXSpeechCheckpoint? {
             switch self {
             case .system:
                 nil
             case .qwenSmall:
-                .small
+                MLXSpeechCheckpoint.checkpoint(tier: .small, configuration: configuration)
             case .qwenLarge:
-                .large
+                MLXSpeechCheckpoint.checkpoint(tier: .large, configuration: configuration)
+            case .breeze:
+                .breezeExperimental
             }
         }
 
@@ -141,6 +159,8 @@ final class VoiceAppModel {
                 "qwen3-tts-0.6b-8bit"
             case .qwenLarge:
                 "qwen3-tts-1.7b-8bit"
+            case .breeze:
+                "breeze-tts-2-4bit"
             }
         }
 
@@ -1070,7 +1090,7 @@ final class VoiceAppModel {
         }
         selectedSpeechBackend = backend
 
-        guard let tier = backend.mlxTier else {
+        guard backend.isMLX else {
             guard backend != activeSpeechBackend else {
                 preferences.setSpeechBackendIdentifier(backend.preferenceIdentifier)
                 return
@@ -1096,14 +1116,13 @@ final class VoiceAppModel {
             return
         }
 
-        guard let configuration = validatedMLXVoiceConfiguration() else {
+        coerceVoiceMode(to: backend)
+        guard let configuration = validatedMLXVoiceConfiguration(),
+            let checkpoint = backend.mlxCheckpoint(for: configuration)
+        else {
             selectedSpeechBackend = activeSpeechBackend
             return
         }
-        let checkpoint = MLXSpeechCheckpoint.checkpoint(
-            tier: tier,
-            configuration: configuration
-        )
         if backend == activeSpeechBackend, checkpoint == activeSpeechCheckpoint {
             preferences.setSpeechBackendIdentifier(backend.preferenceIdentifier)
             return
@@ -1117,16 +1136,13 @@ final class VoiceAppModel {
 
     /// Applies edits to the MLX voice fields (mode, preset, style, description,
     /// clone clip, transcript). Switches checkpoints when the mode requires a
-    /// different Qwen3-TTS variant; otherwise updates the running engine.
+    /// different variant; otherwise updates the running engine.
     func applyMLXVoiceSettings() {
         persistMLXVoiceSettings()
-        guard let tier = selectedSpeechBackend.mlxTier else { return }
-        guard !isSpeechModelPreparing else { return }
-        guard let configuration = validatedMLXVoiceConfiguration() else { return }
-        let checkpoint = MLXSpeechCheckpoint.checkpoint(
-            tier: tier,
-            configuration: configuration
-        )
+        guard selectedSpeechBackend.isMLX, !isSpeechModelPreparing else { return }
+        guard let configuration = validatedMLXVoiceConfiguration(),
+            let checkpoint = selectedSpeechBackend.mlxCheckpoint(for: configuration)
+        else { return }
         if checkpoint == activeSpeechCheckpoint, let engine = mlxSpeechOutput {
             speechModelError = nil
             speechModelStatus = "\(selectedSpeechBackend.rawValue) ready"
@@ -1144,7 +1160,22 @@ final class VoiceAppModel {
 
     func selectMLXVoiceMode(_ mode: MLXVoiceMode) {
         mlxVoiceMode = mode
+        coerceVoiceMode(to: selectedSpeechBackend)
         applyMLXVoiceSettings()
+    }
+
+    /// Moves a voice mode the backend cannot serve to one it can. A preset
+    /// selection becomes a described voice seeded from the preset's
+    /// description, so switching engines never blocks on an empty field.
+    private func coerceVoiceMode(to backend: SpeechBackend) {
+        guard backend.isMLX, !backend.supportedVoiceModes.contains(mlxVoiceMode) else {
+            return
+        }
+        mlxVoiceMode = .designed
+        if mlxVoiceDescriptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            mlxVoiceDescriptionText = selectedMLXSpeechVoice.designInstruction
+        }
+        persistMLXVoiceSettings()
     }
 
     func selectMLXSpeechVoice(_ voice: MLXSpeechVoice) {

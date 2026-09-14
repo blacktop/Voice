@@ -80,6 +80,7 @@ public enum MLXTTSRuntimeError: LocalizedError, Sendable, Equatable {
     case unloading
     case unsupportedHardware
 
+    case unsupportedModelType(String)
     public var errorDescription: String? {
         switch self {
         case .invalidRepositoryID(let value):
@@ -94,6 +95,8 @@ public enum MLXTTSRuntimeError: LocalizedError, Sendable, Equatable {
             "The MLX runtime is unloading its current speech model."
         case .unsupportedHardware:
             "MLX speech synthesis requires an Apple Silicon Mac."
+        case .unsupportedModelType(let modelType):
+            "The checkpoint's model type \"\(modelType)\" is not a supported speech model."
         }
     }
 }
@@ -103,17 +106,22 @@ public enum MLXTTSRuntimeError: LocalizedError, Sendable, Equatable {
 /// before the full utterance has been generated.
 public actor MLXTTSRuntime {
     private final class ModelSession: @unchecked Sendable {
-        let model: Qwen3TTSModel
+        let model: any SpeechGenerationModel
+        /// Set when the checkpoint is Qwen3-TTS, whose reference conditioning
+        /// can be precomputed once per clip instead of per utterance.
+        let qwen3: Qwen3TTSModel?
         // Reference-conditioning cache for cloned voices. Accessed only from
         // synthesis tasks, which the runtime's single-synthesis gate serializes.
         var conditioningKey: String?
         var conditioning: Qwen3TTSModel.Qwen3TTSReferenceConditioning?
 
-        init(model: Qwen3TTSModel) {
+        init(model: any SpeechGenerationModel) {
             self.model = model
+            qwen3 = model as? Qwen3TTSModel
         }
 
         func cachedConditioning(
+            model: Qwen3TTSModel,
             referenceAudioURL: URL,
             transcript: String,
             language: String
@@ -218,7 +226,7 @@ public actor MLXTTSRuntime {
                 }
                 try Task.checkCancellation()
                 preparationHandler(.loading)
-                let model = try await Qwen3TTSModel.fromModelDirectory(modelDirectory)
+                let model = try await Self.loadModel(in: modelDirectory)
                 try Task.checkCancellation()
                 return ModelSession(model: model)
             }
@@ -353,6 +361,37 @@ public actor MLXTTSRuntime {
         }
     }
 
+    /// Loads the checkpoint the snapshot's `config.json` declares. Qwen3-TTS
+    /// streams codec chunks as it decodes; Breeze TTS 2 currently returns the
+    /// utterance as one chunk once decoding finishes.
+    private static func loadModel(
+        in modelDirectory: URL
+    ) async throws -> any SpeechGenerationModel {
+        let modelType = try modelType(in: modelDirectory)
+        switch modelType {
+        case "qwen3_tts":
+            return try await Qwen3TTSModel.fromModelDirectory(modelDirectory)
+        case "breeze", "breeze_tts":
+            return try await BreezeTTSModel.fromModelDirectory(modelDirectory)
+        default:
+            throw MLXTTSRuntimeError.unsupportedModelType(modelType)
+        }
+    }
+
+    static func modelType(in modelDirectory: URL) throws -> String {
+        let data = try Data(contentsOf: modelDirectory.appendingPathComponent("config.json"))
+        let configuration = try JSONDecoder().decode(CheckpointModelType.self, from: data)
+        return configuration.modelType
+    }
+
+    private struct CheckpointModelType: Decodable {
+        let modelType: String
+
+        enum CodingKeys: String, CodingKey {
+            case modelType = "model_type"
+        }
+    }
+
     private static func makeSamplesStream(
         session: ModelSession,
         text: String,
@@ -372,16 +411,17 @@ public actor MLXTTSRuntime {
             )
         }
 
-        if let instruction = request.voiceInstruction {
-            // Style plus clone must recondition per utterance; the instruct
-            // path cannot reuse precomputed reference conditioning.
+        // Style plus clone must recondition per utterance (the instruct path
+        // cannot reuse precomputed reference conditioning), and only Qwen3-TTS
+        // exposes precomputed conditioning at all.
+        guard request.voiceInstruction == nil, let qwen3 = session.qwen3 else {
             let (_, referenceAudio) = try loadAudioArray(
                 from: referenceAudioURL,
                 sampleRate: model.sampleRate
             )
             return model.generateSamplesStream(
                 text: text,
-                voice: instruction,
+                voice: request.voiceInstruction,
                 refAudio: referenceAudio,
                 refText: referenceTranscript,
                 language: language,
@@ -390,14 +430,15 @@ public actor MLXTTSRuntime {
         }
 
         let conditioning = try session.cachedConditioning(
+            model: qwen3,
             referenceAudioURL: referenceAudioURL,
             transcript: referenceTranscript,
             language: language
         )
-        let stream = model.generateStream(
+        let stream = qwen3.generateStream(
             text: text,
             conditioning: conditioning,
-            generationParameters: model.defaultGenerationParameters,
+            generationParameters: qwen3.defaultGenerationParameters,
             streamingInterval: 1.0
         )
         return AsyncThrowingStream { continuation in
