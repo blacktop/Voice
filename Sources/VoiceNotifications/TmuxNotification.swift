@@ -198,10 +198,9 @@ enum TmuxNotification {
         return TmuxProcessIdentity.read(pid) == target.server
     }
 
-    static func activate(_ target: TmuxNotificationTarget) async {
+    static func select(_ target: TmuxNotificationTarget) async -> TmuxProcessIdentity? {
         let clientPID = try? await BlockingCall.run { selectPane(target) }
-        guard let clientPID else { return }
-        await raiseHost(of: clientPID)
+        return clientPID.flatMap(TmuxProcessIdentity.read)
     }
 
     /// Selects the pane and returns the tmux client whose host app to raise,
@@ -227,8 +226,9 @@ enum TmuxNotification {
     }
 
     @MainActor
-    private static func raiseHost(of clientPID: Int32) {
-        var pid = clientPID
+    static func raiseHost(of client: TmuxProcessIdentity) {
+        guard TmuxProcessIdentity.read(client.pid) == client else { return }
+        var pid = client.pid
         var seen = Set<Int32>()
         for _ in 0..<64 {
             guard pid > 1, seen.insert(pid).inserted else { return }

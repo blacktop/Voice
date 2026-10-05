@@ -45,17 +45,24 @@ public final class VoiceNotificationAppDelegate: NSObject, NSApplicationDelegate
                 try keychain.save(configuration)
                 return NotificationRPCResponse()
             } catch { return NotificationRPCResponse(failures: [error.localizedDescription]) }
-        case .post(let message):
+        case .post(let message), .postWithProject(let message):
             do { try message.validate() } catch {
                 return NotificationRPCResponse(failures: [error.localizedDescription])
             }
-            var click: TmuxNotificationTarget?
-            var clickFailure: String?
+            var click = NotificationClickTarget()
+            var clickFailures: [String] = []
             if let pane = message.pane {
                 do {
-                    click = try await TmuxNotification.capture(
+                    click.tmux = try await TmuxNotification.capture(
                         pane: pane, socket: message.tmuxSocket)
-                } catch { clickFailure = "tmux: \(error.localizedDescription)" }
+                } catch { clickFailures.append("tmux: \(error.localizedDescription)") }
+            }
+            if let project = message.zedProject {
+                do {
+                    click.zedProject = try await BlockingCall.run {
+                        try ZedProjectTarget.resolve(project)
+                    }
+                } catch { clickFailures.append("Zed: \(error.localizedDescription)") }
             }
             let target = click
             var response = await NotificationDelivery.perform(push: message.push) {
@@ -68,12 +75,12 @@ public final class VoiceNotificationAppDelegate: NSObject, NSApplicationDelegate
                     ? nil : try self.keychain.load()
                 try await NtfyPush.send(message, configuration: overrides.resolve(stored: stored))
             }
-            if let clickFailure { response.failures.append(clickFailure) }
+            response.failures.append(contentsOf: clickFailures)
             return response
         }
     }
 
-    private func post(_ message: NotificationMessage, target: TmuxNotificationTarget?) async throws
+    private func post(_ message: NotificationMessage, target: NotificationClickTarget) async throws
     {
         guard try await center.requestAuthorization(options: [.alert, .sound]) else {
             throw VoiceNotificationError(
@@ -86,7 +93,7 @@ public final class VoiceNotificationAppDelegate: NSObject, NSApplicationDelegate
         content.sound = .default
         content.interruptionLevel = .active
         content.threadIdentifier = message.identifier
-        if let target { content.userInfo = ["voice-tmux": try JSONEncoder().encode(target)] }
+        content.userInfo = ["voice-click": try JSONEncoder().encode(target)]
         try await center.add(
             UNNotificationRequest(identifier: message.identifier, content: content, trigger: nil))
     }
@@ -101,10 +108,32 @@ public final class VoiceNotificationAppDelegate: NSObject, NSApplicationDelegate
         _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse
     ) async {
         guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
-            let data = response.notification.request.content.userInfo["voice-tmux"] as? Data,
-            data.count <= 4096,
-            let target = try? JSONDecoder().decode(TmuxNotificationTarget.self, from: data)
+            let target = NotificationClickTarget.decode(
+                response.notification.request.content.userInfo)
         else { return }
-        await TmuxNotification.activate(target)
+        await activate(target, identifier: response.notification.request.identifier)
+    }
+
+    private func activate(_ target: NotificationClickTarget, identifier: String) async {
+        do {
+            try await target.activate(
+                selectTmux: TmuxNotification.select,
+                openZed: ZedNotification.activate,
+                raiseHost: TmuxNotification.raiseHost)
+        } catch {
+            logger.error("Zed notification click failed: \(error.localizedDescription)")
+            let content = UNMutableNotificationContent()
+            content.title = "Voice"
+            content.subtitle = "Could not focus Zed"
+            content.body = error.localizedDescription
+            content.interruptionLevel = .active
+            do {
+                try await center.add(
+                    UNNotificationRequest(
+                        identifier: identifier + ".click-error", content: content, trigger: nil))
+            } catch {
+                logger.error("Could not post Zed click failure: \(error.localizedDescription)")
+            }
+        }
     }
 }

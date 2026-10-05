@@ -164,6 +164,25 @@ final class VoiceNotificationsTests: XCTestCase {
                 .validate())
     }
 
+    func testKeychainErrorsExplainMissingProvisioning() {
+        for operation in ["read", "save"] {
+            XCTAssertThrowsError(
+                try NtfyKeychain.checkStatus(errSecMissingEntitlement, operation: operation)
+            ) { error in
+                XCTAssertTrue(error.localizedDescription.contains("provisioning profile"))
+                XCTAssertTrue(error.localizedDescription.contains("reinstall"))
+            }
+        }
+        XCTAssertNoThrow(try NtfyKeychain.checkStatus(errSecSuccess, operation: "save"))
+        XCTAssertThrowsError(
+            try NtfyKeychain.checkStatus(errSecInteractionNotAllowed, operation: "save")
+        ) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "could not save ntfy configuration in Keychain (\(errSecInteractionNotAllowed))")
+        }
+    }
+
     func testPartialFailureDoesNotUndoOrSkipOtherChannel() async {
         var local = 0
         var remote = 0

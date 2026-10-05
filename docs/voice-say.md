@@ -124,5 +124,6 @@ voice-say --notify --notify-title "Build · Voice" \
     --notify-group voice-build "All checks passed."
 ```
 
-The [notification guide](voice-notify.md#with-voice-say) covers metadata
-overrides, speech-lock behavior, and optional phone push.
+Use `--notify-zed-project /absolute/project/path` to attach a Zed project.
+The [notification guide](voice-notify.md#zed-projects) explains window-selection
+limits, metadata overrides, speech-lock behavior, and optional phone push.

@@ -41,6 +41,22 @@ final class VoiceSayNotificationTests: XCTestCase {
         }
     }
 
+    func testZedProjectRequiresNotifyAndKeepsTmuxDefaults() throws {
+        let project = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path
+        XCTAssertThrowsError(try VoiceSay.parse(["--notify-zed-project", project, "hello"]))
+        let command = try VoiceSay.parse([
+            "--notify", "--notify-zed-project", project, "hello",
+        ])
+        let message = try XCTUnwrap(
+            command.notification.message(
+                previewParts: ["hello"],
+                environment: ["TMUX_PANE": "%3", "TMUX": "/tmp/server,123,0"]))
+        XCTAssertEqual(message.zedProject, project)
+        XCTAssertEqual(message.pane, "%3")
+        XCTAssertEqual(message.tmuxSocket, "/tmp/server")
+        XCTAssertFalse(message.push)
+    }
+
     func testSkippedSpeechDoesNotPost() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: url) }

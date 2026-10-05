@@ -10,17 +10,19 @@ public struct VoiceNotificationError: LocalizedError, Sendable {
 public struct NotificationContext: Sendable {
     public let pane: String?
     private let tmuxSocket: String?
+    private let zedProject: String?
     private let push: Bool
     private let pushOverrides: NtfyOverrides?
 
     public init(
-        pane: String?, noPane: Bool, tmuxSocket: String?, push: Bool,
+        pane: String?, noPane: Bool, tmuxSocket: String?, zedProject: String? = nil, push: Bool,
         environment: [String: String]
     ) throws {
         self.pane = try TmuxNotificationContext.pane(
             explicit: pane, disabled: noPane, environment: environment)
         self.tmuxSocket = TmuxNotificationContext.socket(
             explicit: tmuxSocket, environment: environment)
+        self.zedProject = try zedProject.map { try ZedProjectTarget.resolve($0).path }
         self.push = push
         pushOverrides =
             push
@@ -35,7 +37,8 @@ public struct NotificationContext: Sendable {
     {
         let result = NotificationMessage(
             title: title, subtitle: subtitle, message: message, group: group,
-            pane: pane, tmuxSocket: tmuxSocket, push: push, pushOverrides: pushOverrides)
+            pane: pane, tmuxSocket: tmuxSocket, zedProject: zedProject,
+            push: push, pushOverrides: pushOverrides)
         try result.validate()
         return result
     }
@@ -48,12 +51,14 @@ public struct NotificationMessage: Codable, Sendable, Equatable {
     public var group: String
     public var pane: String?
     public var tmuxSocket: String?
+    public var zedProject: String?
     public var push: Bool
     public var pushOverrides: NtfyOverrides?
 
     public init(
         title: String, subtitle: String? = nil, message: String, group: String,
-        pane: String? = nil, tmuxSocket: String? = nil, push: Bool = false,
+        pane: String? = nil, tmuxSocket: String? = nil, zedProject: String? = nil,
+        push: Bool = false,
         pushOverrides: NtfyOverrides? = nil
     ) {
         self.title = title
@@ -62,6 +67,7 @@ public struct NotificationMessage: Codable, Sendable, Equatable {
         self.group = group
         self.pane = pane
         self.tmuxSocket = tmuxSocket
+        self.zedProject = zedProject
         self.push = push
         self.pushOverrides = pushOverrides
     }
@@ -80,6 +86,7 @@ public struct NotificationMessage: Codable, Sendable, Equatable {
                 throw VoiceNotificationError("tmux socket must be an absolute path")
             }
         }
+        if let zedProject { try ZedProjectTarget.validatePath(zedProject) }
     }
 
     public var identifier: String {
@@ -127,6 +134,9 @@ public struct NotificationMessage: Codable, Sendable, Equatable {
 
 public enum NotificationRPCRequest: Codable, Sendable {
     case post(NotificationMessage)
+    // Older Voice versions reject this discriminator instead of silently
+    // accepting a post while discarding its unknown project field.
+    case postWithProject(NotificationMessage)
     case configurePush(NtfyConfiguration)
 }
 

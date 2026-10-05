@@ -29,12 +29,22 @@ set -euo pipefail
 
 derived_data=""
 previous=""
+settings_query=false
 for argument in "$@"; do
     if [[ $previous == "-derivedDataPath" ]]; then
         derived_data="$argument"
     fi
+    if [[ $argument == "-showBuildSettings" ]]; then
+        settings_query=true
+    fi
     previous="$argument"
 done
+
+# Keep JSON queries machine-readable. They do not compile modules and cannot
+# benefit from the build-only cache recovery below.
+if [[ $settings_query == true ]]; then
+    exec xcodebuild -skipPackagePluginValidation "$@" MACOSX_DEPLOYMENT_TARGET=26.0
+fi
 
 log_file="$(mktemp -t xcbuild)"
 trap 'rm -f "$log_file"' EXIT

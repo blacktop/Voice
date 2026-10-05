@@ -18,7 +18,7 @@
 | Voice-clone reference clip | Local file chosen by the user, read by the local Qwen3-TTS Base model | Never uploaded; conditioned in memory per session; the file path and transcript persist in `UserDefaults` |
 | Local history | App support file | Off by default; AES-GCM; bounded to 500 entries; disabling history does not delete existing data |
 | History key | macOS Keychain | `WhenUnlockedThisDeviceOnly` |
-| Agent notification text and tmux click target | Local signed Voice app over a private Unix socket, then macOS Notification Center | System-managed notification retention; repeated group replaces the prior notification |
+| Agent notification text, tmux target, and optional Zed project path | Local signed Voice app over a private Unix socket, then macOS Notification Center | System-managed notification retention; repeated group replaces the prior notification |
 | Optional phone notification | Explicitly configured ntfy HTTPS server | Provider configuration and retention policy apply; no request without `--push` or `--notify-push` |
 | ntfy destination and access token | Voice's macOS Keychain | `WhenUnlockedThisDeviceOnly`; replaced by `configure-push`; not synchronized |
 | Export | User-selected path | Explicit user action only |
@@ -54,7 +54,10 @@ app also checks each client's kernel audit token against its Apple-anchored
 signing-team requirement before reading a request. The service accepts only the
 same local user, bounds request sizes and concurrent connections, and does not log
 notification text or tokens. At click time it checks the recorded tmux server
-process identity before selecting the pane. No arbitrary click command is stored.
+process identity before selecting the pane. A Zed target stores a canonical local
+directory and passes it to Zed's bundled CLI only when the notification is
+clicked. Voice does not inspect project contents or store an arbitrary click
+command. Opening a project is subject to Zed's own settings and privacy policy.
 
 With phone push enabled, the selected ntfy provider receives the title, body,
 subtitle, topic, bearer token, and connection metadata. Its operators and server
@@ -63,9 +66,9 @@ topic; an obscure topic name alone is not access control. Self-hosted ntfy may
 use an upstream ntfy server and Apple's push infrastructure to wake the iOS app;
 the [documented relay](https://docs.ntfy.sh/config/#ios-instant-notifications)
 sends a poll request containing the message ID, and the phone then fetches the
-message from the configured server. Voice sends no audio or tmux click command
-through this path. HTTPS redirects are rejected, and a server override cannot
-reuse a saved token for a different destination.
+message from the configured server. Voice sends no audio, tmux click target, or
+Zed project path through this path. HTTPS redirects are rejected, and a server
+override cannot reuse a saved token for a different destination.
 
 The same-audio comparison mode does not widen that network boundary: it
 uses only model snapshots already present in this store, runs one candidate at

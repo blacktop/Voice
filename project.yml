@@ -5,6 +5,8 @@ options:
     macOS: "26.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
+  # XcodeGen 2.46 serializes nested target attributes as strings (#1637).
+  postGenCommand: /usr/bin/python3 scripts/fix-project-capabilities.py Voice.xcodeproj/project.pbxproj
 configs:
   Debug: debug
   Release: release
@@ -95,6 +97,10 @@ targets:
   Voice:
     type: application
     platform: macOS
+    attributes:
+      SystemCapabilities:
+        com.apple.Keychain:
+          enabled: 1
     sources:
       - Sources/VoiceApp
     dependencies:
@@ -135,7 +141,8 @@ targets:
         # Sources/VoiceApp/Voice.icon is an Icon Composer document, not an asset
         # catalog; Xcode still selects it by name through this setting.
         ASSETCATALOG_COMPILER_APPICON_NAME: Voice
-        CODE_SIGN_ENTITLEMENTS: Configs/Voice.entitlements
+        CODE_SIGN_ENTITLEMENTS: $(VOICE_APP_ENTITLEMENTS)
+        VOICE_APP_ENTITLEMENTS: Configs/Voice.entitlements
         PRODUCT_BUNDLE_IDENTIFIER: io.blacktop.Voice
         PRODUCT_NAME: Voice
   VoiceBench:

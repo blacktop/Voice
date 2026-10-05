@@ -184,7 +184,8 @@ struct NtfyKeychain {
         var item: CFTypeRef?
         let status = SecItemCopyMatching(lookup as CFDictionary, &item)
         if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = item as? Data, data.count <= 16_384,
+        try Self.checkStatus(status, operation: "read")
+        guard let data = item as? Data, data.count <= 16_384,
             let configuration = try? JSONDecoder().decode(NtfyConfiguration.self, from: data)
         else { throw VoiceNotificationError("ntfy Keychain configuration is unavailable") }
         try configuration.validate()
@@ -201,9 +202,18 @@ struct NtfyKeychain {
         if status == errSecItemNotFound {
             status = SecItemAdd(query.merging(values) { _, value in value } as CFDictionary, nil)
         }
+        try Self.checkStatus(status, operation: "save")
+    }
+
+    static func checkStatus(_ status: OSStatus, operation: String) throws {
+        if status == errSecMissingEntitlement {
+            throw VoiceNotificationError(
+                "Voice is missing its Keychain entitlement or provisioning profile; "
+                    + "rebuild and reinstall a provisioned Voice app")
+        }
         guard status == errSecSuccess else {
             throw VoiceNotificationError(
-                "could not save ntfy configuration in Keychain (\(status))")
+                "could not \(operation) ntfy configuration in Keychain (\(status))")
         }
     }
 }

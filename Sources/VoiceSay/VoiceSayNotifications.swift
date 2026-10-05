@@ -15,6 +15,8 @@ struct VoiceSayNotificationOptions: ParsableArguments {
     @Option(help: "Notification tmux pane (default: TMUX_PANE).") var notifyPane: String?
     @Flag(help: "Omit the notification's tmux click target.") var notifyNoPane = false
     @Option(help: "Notification tmux socket.", completion: .file()) var notifyTmuxSocket: String?
+    @Option(help: "Absolute local project directory to focus in Zed.", completion: .directory)
+    var notifyZedProject: String?
     @Flag(help: "Also send the notification through ntfy.") var notifyPush = false
 
     mutating func validate() throws {
@@ -28,7 +30,7 @@ struct VoiceSayNotificationOptions: ParsableArguments {
         if !notify,
             notifyTitle != nil || notifySubtitle != nil || notifyMessage != nil
                 || notifyGroup != nil || notifyPane != nil || notifyNoPane
-                || notifyTmuxSocket != nil || notifyPush
+                || notifyTmuxSocket != nil || notifyZedProject != nil || notifyPush
         {
             throw ValidationError("notification options require --notify")
         }
@@ -45,7 +47,7 @@ struct VoiceSayNotificationOptions: ParsableArguments {
         guard notify else { return nil }
         let context = try NotificationContext(
             pane: notifyPane, noPane: notifyNoPane, tmuxSocket: notifyTmuxSocket,
-            push: notifyPush, environment: environment)
+            zedProject: notifyZedProject, push: notifyPush, environment: environment)
         return try context.message(
             title: notifyTitle ?? "Voice", subtitle: notifySubtitle,
             message: notifyMessage ?? NotificationMessage.preview(parts: previewParts),

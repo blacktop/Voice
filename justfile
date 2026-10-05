@@ -8,6 +8,7 @@ release_derived_data := ".build/DerivedData-Release"
 # changes the build parameters enough to break the explicit-module scan.
 cli_derived_data := ".build/DerivedData-CLI"
 notify_derived_data := ".build/DerivedData-Notify"
+adhoc_app_entitlements := ".build/VoiceAdhoc.entitlements"
 source_packages := ".build/SourcePackages"
 destination := "platform=macOS,arch=arm64e"
 
@@ -17,39 +18,76 @@ generate:
     xcodegen generate
 
 build: generate
-    ./scripts/xcbuild.sh -quiet -project {{project}} -scheme {{scheme}} -configuration Debug -destination '{{destination}}' -derivedDataPath {{debug_derived_data}} -clonedSourcePackagesDirPath {{source_packages}} -onlyUsePackageVersionsFromResolvedFile ARCHS=arm64e ONLY_ACTIVE_ARCH=YES build
+    @just _local-build Debug build
 
-test: generate
-    ./scripts/xcbuild.sh -quiet -project {{project}} -scheme {{scheme}} -configuration Debug -destination '{{destination}}' -derivedDataPath {{debug_derived_data}} -clonedSourcePackagesDirPath {{source_packages}} -onlyUsePackageVersionsFromResolvedFile ARCHS=arm64e ONLY_ACTIVE_ARCH=YES test
+test: test-build-scripts
+    @just _local-build Debug test
+
+# Check generated capability metadata and the installation signing audit.
+test-build-scripts: generate
+    /usr/bin/python3 -m unittest discover -s Tests/BuildScriptsTests
 
 release: generate
+    @just _local-build Release build
+
+# Local compile/test builds can use ad-hoc signing when no team is configured.
+# Signed install and distribution recipes do not use this fallback.
+[private]
+_local-build configuration action:
     #!/usr/bin/env bash
     set -euo pipefail
+    configuration={{quote(configuration)}}
+    action={{quote(action)}}
+    case "$configuration" in
+        Debug) derived_data="{{debug_derived_data}}" ;;
+        Release) derived_data="{{release_derived_data}}" ;;
+        *) echo "error: unsupported build configuration: $configuration" >&2; exit 64 ;;
+    esac
+    case "$action" in build|test) ;; *) echo "error: unsupported build action: $action" >&2; exit 64 ;; esac
     build=(
         ./scripts/xcbuild.sh -quiet
         -project "{{project}}"
         -scheme "{{scheme}}"
-        -configuration Release
+        -configuration "$configuration"
         -destination "{{destination}}"
-        -derivedDataPath "{{release_derived_data}}"
+        -derivedDataPath "$derived_data"
         -clonedSourcePackagesDirPath "{{source_packages}}"
         -onlyUsePackageVersionsFromResolvedFile
         ARCHS=arm64e
         ONLY_ACTIVE_ARCH=YES
     )
+    signing_mode=adhoc
     if security find-identity -v -p codesigning 2>/dev/null \
         | grep -Eq '^[[:space:]]*[1-9][0-9]* valid identities found$'; then
-        echo "Building a signed Release app with an installed identity."
-        "${build[@]}" build
+        settings_file="$(mktemp -t voice-build-settings)"
+        trap 'rm -f "$settings_file"' EXIT
+        "${build[@]}" -showBuildSettings -json >"$settings_file"
+        signing_mode="$(/usr/bin/python3 - "$settings_file" <<'PY'
+    import json
+    import sys
+    with open(sys.argv[1]) as source:
+        entries = json.load(source)
+    target = next((entry for entry in entries if entry.get("target") == "Voice"), None)
+    if target is None:
+        sys.exit("Voice build settings are unavailable")
+    print("signed" if target["buildSettings"].get("DEVELOPMENT_TEAM", "").strip() else "adhoc")
+    PY
+        )"
+    fi
+    if [[ "$signing_mode" == signed ]]; then
+        echo "Building a signed $configuration app with the configured team."
+        "${build[@]}" "$action"
     else
-        echo "Warning: no valid code-signing identity found; building an ad-hoc Release app." >&2
+        echo "Warning: no configured signing team or identity; using an ad-hoc $configuration app." >&2
         echo "Use 'just release-signed' when permission identity or Keychain behavior matters." >&2
+        just _adhoc-app-entitlements
         "${build[@]}" \
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM= \
             CODE_SIGN_IDENTITY=- \
             PROVISIONING_PROFILE_SPECIFIER= \
-            build
+            VOICE_APP_ENTITLEMENTS={{adhoc_app_entitlements}} \
+            "$action"
     fi
 
 release-signed: generate
@@ -158,20 +196,34 @@ _verify-security-path app:
 
     audit_executable "${app}" "${app}/Contents/MacOS/{{scheme}}"
     require_entitlement com.apple.security.device.audio-input true
+    /usr/bin/python3 scripts/verify-provisioning.py "${app}" "${entitlements}" "${signature}"
     audit_executable "${app}/Contents/MacOS/voice-say" "${app}/Contents/MacOS/voice-say"
+    reject_entitlement keychain-access-groups
     audit_executable "${app}/Contents/MacOS/voice-notify" "${app}/Contents/MacOS/voice-notify"
+    reject_entitlement keychain-access-groups
 
-    printf 'Verified Hardened Runtime, arm64e, Enhanced Security v2, and hard-mode MIE entitlements.\n'
+    printf 'Verified Hardened Runtime, arm64e, Enhanced Security v2, hard-mode MIE, and provisioning authorization.\n'
 
 # Build a short-lived ad-hoc Release app without an Apple certificate.
-release-adhoc: generate
-    ./scripts/xcbuild.sh -quiet -project {{project}} -scheme {{scheme}} -configuration Release -destination '{{destination}}' -derivedDataPath {{release_derived_data}} -clonedSourcePackagesDirPath {{source_packages}} -onlyUsePackageVersionsFromResolvedFile ARCHS=arm64e ONLY_ACTIVE_ARCH=YES CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= CODE_SIGN_IDENTITY=- PROVISIONING_PROFILE_SPECIFIER= build
+release-adhoc: generate _adhoc-app-entitlements
+    ./scripts/xcbuild.sh -quiet -project {{project}} -scheme {{scheme}} -configuration Release -destination '{{destination}}' -derivedDataPath {{release_derived_data}} -clonedSourcePackagesDirPath {{source_packages}} -onlyUsePackageVersionsFromResolvedFile ARCHS=arm64e ONLY_ACTIVE_ARCH=YES CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= CODE_SIGN_IDENTITY=- PROVISIONING_PROFILE_SPECIFIER= VOICE_APP_ENTITLEMENTS={{adhoc_app_entitlements}} build
+
+# Keep compile-only ad-hoc builds free of entitlements that require a profile.
+[private]
+_adhoc-app-entitlements:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p .build
+    cp Configs/Voice.entitlements {{adhoc_app_entitlements}}
+    for key in com.apple.application-identifier com.apple.developer.team-identifier keychain-access-groups; do
+        /usr/libexec/PlistBuddy -c "Delete :$key" {{adhoc_app_entitlements}}
+    done
 
 # Unsigned build + test for CI runners, which have no signing identity.
 # Safe there because every run starts with fresh DerivedData; locally,
 # mixing signed and unsigned parameters in one DerivedData breaks Xcode's
 # explicit-module scanner (see Configs/Project.xcconfig).
-ci: generate
+ci: test-build-scripts
     ./scripts/xcbuild.sh -quiet -project {{project}} -scheme {{scheme}} -configuration Debug -destination '{{destination}}' -derivedDataPath {{debug_derived_data}} -clonedSourcePackagesDirPath {{source_packages}} -onlyUsePackageVersionsFromResolvedFile ARCHS=arm64e ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build test
 
 setup-lsp: generate

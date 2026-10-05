@@ -63,6 +63,24 @@ final class VoiceNotifyTests: XCTestCase {
             ]))
     }
 
+    func testZedProjectCanBeCombinedWithOrWithoutTmux() throws {
+        let project = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path
+        let environment = ["TMUX_PANE": "%8", "TMUX": "/tmp/server,123,0"]
+        let command = try PostNotification.parse(required + ["--zed-project", project])
+        let combined = try command.makeMessage(environment: environment)
+        XCTAssertEqual(combined.zedProject, project)
+        XCTAssertEqual(combined.pane, "%8")
+        XCTAssertEqual(combined.tmuxSocket, "/tmp/server")
+        XCTAssertFalse(combined.push)
+        let standalone = try PostNotification.parse(
+            required + ["--zed-project", project, "--no-pane"])
+        XCTAssertEqual(try standalone.makeMessage(environment: environment).zedProject, project)
+        XCTAssertNil(try standalone.makeMessage(environment: environment).pane)
+        XCTAssertThrowsError(try PostNotification.parse(required + ["--zed-project", "relative"])) {
+            XCTAssertEqual(VoiceNotify.exitCode(for: $0).rawValue, 64)
+        }
+    }
+
     func testHelpDoesNotPost() {
         XCTAssertThrowsError(try PostNotification.parse(["--help"])) { error in
             XCTAssertEqual(VoiceNotify.exitCode(for: error).rawValue, 0)

@@ -15,7 +15,7 @@ struct VoiceNotify: AsyncParsableCommand {
 
 struct PostNotification: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "post", abstract: "Post an alert, optionally with a tmux target or phone push."
+        commandName: "post", abstract: "Post an alert with optional click targets or phone push."
     )
 
     @Option(help: "Notification title.") var title: String
@@ -25,6 +25,9 @@ struct PostNotification: AsyncParsableCommand {
     @Option(help: "tmux pane ID; defaults to TMUX_PANE.") var pane: String?
     @Flag(help: "Do not attach a tmux click target.") var noPane = false
     @Option(help: "Explicit tmux server socket.", completion: .file()) var tmuxSocket: String?
+    @Option(
+        help: "Absolute local project directory to open or focus in Zed.", completion: .directory)
+    var zedProject: String?
     @Flag(help: "Also publish through the configured ntfy server.") var push = false
 
     mutating func validate() throws {
@@ -35,7 +38,7 @@ struct PostNotification: AsyncParsableCommand {
 
     func makeMessage(environment: [String: String]) throws -> NotificationMessage {
         try NotificationContext(
-            pane: pane, noPane: noPane, tmuxSocket: tmuxSocket, push: push,
+            pane: pane, noPane: noPane, tmuxSocket: tmuxSocket, zedProject: zedProject, push: push,
             environment: environment
         ).message(title: title, subtitle: subtitle, message: message, group: group)
     }

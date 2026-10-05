@@ -326,24 +326,28 @@ public enum NotificationClient {
         -> (NotificationRPCRequest, String?)
     {
         switch request {
-        case .post(var message):
+        case .post(var message), .postWithProject(var message):
             try message.validate()
             guard message.push else {
                 message.pushOverrides = nil
-                return (.post(message), nil)
+                return (postRequest(message), nil)
             }
             do { try message.pushOverrides?.validate() } catch {
                 // Invalid optional credentials must not prevent the Mac alert
                 // or make the bounded RPC encode an arbitrarily large value.
                 message.push = false
                 message.pushOverrides = nil
-                return (.post(message), "push: \(error.localizedDescription)")
+                return (postRequest(message), "push: \(error.localizedDescription)")
             }
-            return (.post(message), nil)
+            return (postRequest(message), nil)
         case .configurePush(let configuration):
             try configuration.validate()
             return (request, nil)
         }
+    }
+
+    private static func postRequest(_ message: NotificationMessage) -> NotificationRPCRequest {
+        message.zedProject == nil ? .post(message) : .postWithProject(message)
     }
 
     @MainActor
@@ -434,16 +438,18 @@ public enum NotificationClient {
                 + "quit and reopen that app, then retry")
     }
 
-    static func checkLaunch(appURL: URL, runningAppURLs: [URL?]) throws {
+    static func checkLaunch(
+        appURL: URL, runningAppURLs: [URL?], applicationName: String = "Voice"
+    ) throws {
         let selected = appURL.resolvingSymlinksInPath().standardizedFileURL
         for running in runningAppURLs {
             guard let running else {
-                throw VoiceNotificationError("quit the running Voice app, then retry")
+                throw VoiceNotificationError("quit the running \(applicationName) app, then retry")
             }
             let runningURL = running.resolvingSymlinksInPath().standardizedFileURL
             guard runningURL == selected else {
                 throw VoiceNotificationError(
-                    "quit the Voice running at \(runningURL.path), then retry")
+                    "quit the \(applicationName) running at \(runningURL.path), then retry")
             }
         }
     }

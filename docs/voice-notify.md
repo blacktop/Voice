@@ -22,12 +22,20 @@ it without installing. The signed executable goes under
 `~/.local/libexec/voice-notify`, with an exec wrapper in `~/.local/bin`.
 The app also includes `Voice.app/Contents/MacOS/voice-notify`.
 
+If `configure-push` reports Keychain error `-34018`, the running app lacks a
+valid Keychain entitlement or provisioning profile. Complete the
+[signing setup](../README.md#build-and-install), run `just install-app`, and
+retry configuration. The token stays in the device-bound Keychain; it is not
+saved to the older login Keychain as a fallback.
+If the build rejects a wildcard profile for missing Enhanced Security, enable
+that capability on Voice's App ID and regenerate the provisioning profile.
+
 For persistent alerts, open **System Settings → Notifications → Voice → Alert
 Style → Persistent**. The first notification request asks for permission.
 Sending the same `--group` again replaces that group's notification.
 
 `--pane %3` records a tmux pane for the click action. The default comes from
-`TMUX_PANE`; use `--no-pane` to disable the action or `--tmux-socket PATH` to
+`TMUX_PANE`; use `--no-pane` to omit the tmux target or `--tmux-socket PATH` to
 choose a server. On a click, Voice finds the pane's current session and the
 most recently active client already showing it. It selects that pane and
 window, then raises the client's terminal app. If no client shows the session,
@@ -39,15 +47,49 @@ to another session.
 successful exit means the request was accepted; it doesn't prove that someone
 saw the alert.
 
+## Zed projects
+
+Add `--zed-project PATH` to open or focus a local project when you click the
+notification. The path must be an absolute, existing directory on a local
+volume. Voice resolves symlinks and records the full path, so two projects
+named `dotfiles` aren't treated as the same project.
+Install the updated app and CLI together with `just install`; an older Voice
+app rejects project-aware requests.
+
+```fish
+voice-notify --title "Build · dotfiles" --message "Ready for review." \
+    --group dotfiles-build \
+    --zed-project /Users/blacktop/Developer/Mine/blacktop/dotfiles --no-pane
+```
+
+To include the current tmux pane, omit `--no-pane`. A hook that already resolved
+an exact target can pass `--pane %3 --tmux-socket /absolute/path/to/socket`
+alongside `--zed-project`. Voice performs the usual tmux selection first, then
+asks Zed to open the project. If Zed fails, Voice raises the tmux client's host
+app. No phone notification is sent by these examples.
+
+Voice uses the running Zed installation. When Zed is closed, it prefers
+`/Applications/Zed.app`, then checks registered Stable, Preview, Nightly, and
+Dev builds in that order. It invokes that app's bundled CLI with `--existing`.
+In the
+[audited Zed 1.22.0 implementation](https://github.com/zed-industries/zed/blob/v1.22.0/crates/zed/src/zed/open_listener.rs#L791),
+this reuses a project by full path or opens it in the current window. Zed's
+public CLI cannot enumerate project roots, choose a native window by ID, or
+reveal an existing terminal tab by PID. Multiple project windows are supported;
+if the exact same project is open more than once, Zed chooses which copy to
+focus. Voice still refuses to choose between different running Zed installations.
+On failure, it shows a local error notification and retains the tmux host-app
+fallback. A hidden terminal tab may need to be selected manually.
+
 ## With voice-say
 
 `voice-say --notify` posts a short preview once it acquires the speech lock.
 Skipped speech posts nothing. Notification delivery runs alongside speech,
 and the command waits for its result after releasing the lock. Use
 `--notify-title`, `--notify-subtitle`, `--notify-message`, `--notify-group`,
-`--notify-pane`, `--notify-no-pane`, and `--notify-tmux-socket` to override the
-notification fields. A delivery failure is printed without interrupting
-speech, then the command exits nonzero.
+`--notify-pane`, `--notify-no-pane`, `--notify-tmux-socket`, and
+`--notify-zed-project` to override the notification fields. A delivery failure
+is printed without interrupting speech, then the command exits nonzero.
 
 ## Phone notifications
 

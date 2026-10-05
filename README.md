@@ -56,6 +56,17 @@ cp -n Configs/Project.local.xcconfig.example Configs/Project.local.xcconfig
 open -e Configs/Project.local.xcconfig
 ```
 
+The app also needs a provisioning profile that authorizes its Keychain access
+group and **Enhanced Security**. The Voice target already has
+[Keychain Sharing](https://developer.apple.com/documentation/xcode/configuring-keychain-sharing)
+configured in Xcode; you don't need to find a separate checkbox for it on the
+developer website. Enable Enhanced Security on the explicit `io.blacktop.Voice`
+App ID in your developer account. For local builds, create or regenerate a
+[Mac App Development profile](https://developer.apple.com/help/account/provisioning-profiles/create-a-development-provisioning-profile)
+for that App ID, your existing signing certificate, and this Mac, then download
+it in Xcode. An older wildcard profile may lack Enhanced Security. Distribution
+builds need a matching Developer ID profile.
+
 Then test and install:
 
 ```fish
@@ -72,10 +83,12 @@ If an older copy takes precedence on PATH, invoke the new tools explicitly as
 `~/.local/bin/voice-say` or `~/.local/bin/voice-notify`.
 
 For development, `just build` makes a Debug build and `just release-signed`
-makes a signed Release build without installing it. `just release` can fall
-back to ad-hoc signing when no valid signing identity is available. Ad-hoc
-builds are useful for compile checks, but their changing identity means
-Microphone, Accessibility, and Input Monitoring grants won't stick.
+makes a signed Release build without installing it. `just build`, `just test`,
+and `just release` use ad-hoc signing when no team or valid signing identity
+is available. Ad-hoc builds are useful for compile checks, but their changing
+identity means Microphone, Accessibility, and Input Monitoring grants won't
+stick. They can't
+use the device-bound Keychain for encrypted history or ntfy configuration.
 
 The build recipes use `scripts/xcbuild.sh` to recover from an Xcode 27
 explicit-modules bug. If the module scanner fails, the script clears that
@@ -84,8 +97,10 @@ build's DerivedData and retries once.
 `just verify-security` checks the signed Release app for arm64e, Hardened
 Runtime, Enhanced Security v2, and the hard-mode Memory Integrity Enforcement
 entitlements: hardened heap, checked allocations, read-only dyld state, and
-platform restrictions. `just install-app` runs the same audit before copying
-the app.
+platform restrictions. It also checks that the embedded provisioning profile
+has not expired and authorizes the signing certificate, explicit application
+ID, private Keychain group, and Enhanced Security entitlements.
+`just install-app` runs the same audit before copying the app.
 
 ## First run
 
@@ -174,8 +189,8 @@ narration, playback controls, and tuning.
 
 ## Agent notifications
 
-`voice-notify` sends native Mac notifications, with tmux click actions and
-optional phone push through ntfy:
+`voice-notify` sends native Mac notifications, with tmux and Zed project click
+targets and optional phone push through ntfy:
 
 ```fish
 voice-notify --title "Build · Voice" --message "All checks passed." \
@@ -183,7 +198,7 @@ voice-notify --title "Build · Voice" --message "All checks passed." \
 ```
 
 See the [voice-notify guide](docs/voice-notify.md) for persistent alerts,
-notification groups, `voice-say --notify`, and phone setup.
+project targeting limits, notification groups, `voice-say --notify`, and phone setup.
 
 ## macOS 27 beta status
 
