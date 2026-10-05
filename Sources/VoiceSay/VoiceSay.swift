@@ -2,6 +2,9 @@ import ArgumentParser
 import Foundation
 import Synchronization
 import VoiceMLX
+import VoiceMLXRuntime
+import VoiceNotifications
+import VoicePlatform
 
 /// `say`-shaped CLI for Voice's local Qwen3-TTS voices, so agents and scripts
 /// can use the same on-device speech the app uses.
@@ -12,13 +15,29 @@ struct VoiceSay: AsyncParsableCommand {
         discussion: """
             With no options the command speaks in the voice Voice's Settings is \
             configured to use, reusing the checkpoint the app already \
-            downloaded. Each option overrides only what it names.
+            downloaded. If the app selects Breeze, the CLI uses Qwen3 instead; \
+            Breeze requires --engine breeze with --describe or --clone. \
+            Each option overrides only what it names.
 
-            Text comes from the operands, or from standard input when none are \
-            given. The first use of a checkpoint downloads it from Hugging Face \
+            Text comes from the operands, --file (UTF-8 text or Markdown), or \
+            standard input. Operands are spoken as plain text and streamed. \
+            Files and stdin use Markdown narration, which prepares a paragraph ahead of \
+            playback, summarizes code blocks and URLs, and leaves a longer rest \
+            between paragraphs. Headings, quotations, and the labels standing \
+            in for omitted material are read by the checkpoint's other preset \
+            speaker. --speed stretches playback without changing pitch. Use \
+            --stream for lower startup latency without pause normalization, \
+            and --timings to diagnose synthesis speed and playback gaps.
+
+            In interactive --file mode, Space pauses/resumes without Enter. \
+            --announce-pause adds spoken feedback; --no-controls disables keys. \
+            Tables are announced briefly rather than read cell by cell.
+
+            The first use of a checkpoint downloads it from Hugging Face \
             into ~/Library/Application Support/io.blacktop.Voice/MLXModels; \
-            synthesis then runs entirely on this Mac and the text and audio \
-            never leave it.
+            synthesis then runs entirely on this Mac. --notify posts a short \
+            text preview after acquiring the speech lock; --notify-push also \
+            sends that notification to the configured ntfy server.
             """,
         version: "0.1.0"
     )
@@ -28,6 +47,28 @@ struct VoiceSay: AsyncParsableCommand {
     // works after the conventional `--` separator.
     @Argument(help: "The text to speak. Read from stdin when omitted.")
     var words: [String] = []
+
+    @Option(
+        name: [.short, .long],
+        help: "Read a UTF-8 text/Markdown document, up to 4 MiB (- for stdin).",
+        completion: .file())
+    var file: String?
+
+    @Flag(
+        name: .long,
+        help: "Play raw model chunks immediately instead of preparing narration segments.")
+    var stream = false
+
+    @Flag(
+        name: .long,
+        help: "Report per-segment synthesis, audio, silence trimming, and queue timings to stderr.")
+    var timings = false
+
+    @Flag(name: .long, help: "Disable Space pause/resume controls for file narration.")
+    var noControls = false
+
+    @Flag(name: .long, help: "Say 'Paused' with the system voice when Space pauses file narration.")
+    var announcePause = false
 
     @Option(
         name: .long,
@@ -57,6 +98,35 @@ struct VoiceSay: AsyncParsableCommand {
 
     @Option(
         name: .long,
+        help: """
+            Sampling temperature, 0 to 1.5. Lower keeps the voice steadier from \
+            one utterance to the next; higher is more expressive. The model's \
+            own default is 0.9.
+            """
+    )
+    var temperature: Float = 0.6
+
+    @Option(
+        name: .long,
+        help: """
+            Playback speed, 0.5 to 2. Stretches time without changing pitch, \
+            so 1.2 reads a fifth faster and shortens every pause the same way.
+            """
+    )
+    var speed: Float = 1
+
+    @Option(
+        name: .long,
+        help: """
+            Restart the sampler from this seed for every utterance, so a \
+            document narrates the same way each time and the opening of each \
+            utterance draws the same noise.
+            """
+    )
+    var seed: UInt64?
+
+    @Option(
+        name: .long,
         help: "Create a voice from a description. Always uses the 1.7B VoiceDesign model."
     )
     var describe: String?
@@ -83,10 +153,36 @@ struct VoiceSay: AsyncParsableCommand {
     @Flag(name: .long, help: "List the preset voices and model tiers, then exit.")
     var listVoices = false
 
+    @OptionGroup var notification: VoiceSayNotificationOptions
+
     mutating func validate() throws {
-        if describe != nil, clone != nil {
-            throw ValidationError("Choose only one of --describe or --clone.")
+        try validateInput()
+        try validateSampling()
+        try validateVoiceNames()
+        try validateBreeze()
+        try validateClone()
+    }
+
+    private func validateInput() throws {
+        if announcePause, file == nil || noControls {
+            throw ValidationError(
+                "--announce-pause requires --file with terminal controls enabled.")
         }
+        if file != nil, !words.isEmpty {
+            throw ValidationError("Choose either --file or text arguments, not both.")
+        }
+    }
+
+    private func validateSampling() throws {
+        guard temperature.isFinite, (0...1.5).contains(temperature) else {
+            throw ValidationError("--temperature must be between 0 and 1.5.")
+        }
+        guard speed.isFinite, (0.5...2).contains(speed) else {
+            throw ValidationError("--speed must be between 0.5 and 2.")
+        }
+    }
+
+    private func validateVoiceNames() throws {
         if let voice, Self.parseVoice(voice) == nil {
             let names = MLXSpeechVoice.allCases.map(\.rawValue).joined(separator: ", ")
             throw ValidationError("Unknown voice '\(voice)'. Available: \(names).")
@@ -94,18 +190,26 @@ struct VoiceSay: AsyncParsableCommand {
         if let tier, MLXSpeechModelTier(rawValue: tier.lowercased()) == nil {
             throw ValidationError("Unknown tier '\(tier)'. Use small or large.")
         }
-        if engine == .breeze {
-            if voice != nil {
-                throw ValidationError(
-                    "Breeze TTS 2 has no preset speakers, so --voice does not apply. "
-                        + "Describe a voice with --describe or clone one with --clone."
-                )
-            }
-            if tier != nil {
-                throw ValidationError(
-                    "--tier selects a Qwen3-TTS size and does not apply to --engine breeze."
-                )
-            }
+    }
+
+    private func validateBreeze() throws {
+        guard engine == .breeze else { return }
+        if voice != nil {
+            throw ValidationError(
+                "Breeze TTS 2 has no preset speakers, so --voice does not apply. "
+                    + "Describe a voice with --describe or clone one with --clone."
+            )
+        }
+        if tier != nil {
+            throw ValidationError(
+                "--tier selects a Qwen3-TTS size and does not apply to --engine breeze."
+            )
+        }
+    }
+
+    private func validateClone() throws {
+        if describe != nil, clone != nil {
+            throw ValidationError("Choose only one of --describe or --clone.")
         }
         if let clone {
             let transcript = cloneTranscript?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -162,19 +266,42 @@ struct VoiceSay: AsyncParsableCommand {
             }
         }
 
-        guard let text = Self.resolveText(words), !text.isEmpty else {
-            throw ValidationError(
-                "No text to speak. Pass text as arguments or pipe it on stdin."
-            )
-        }
-        try await Self.speak(text, options: options, quiet: quiet, wait: wait)
+        let (blocks, streaming) = try resolveInput()
+        let narration = NarrationOptions(
+            streaming: streaming,
+            timings: timings,
+            controls: file != nil && !noControls,
+            announcePause: announcePause,
+            sampling: MLXTTSSampling(
+                temperature: temperature, topK: MLXSpeechOutput.defaultSampling.topK,
+                topP: MLXSpeechOutput.defaultSampling.topP, seed: seed),
+            speed: speed
+        )
+        try await Self.speak(
+            blocks, options: options, narration: narration, quiet: quiet, wait: wait,
+            notification: try notification.message(
+                previewParts: blocks.lazy.map(\.text),
+                environment: ProcessInfo.processInfo.environment)
+        )
+    }
+
+    /// Delivery flags that only matter once text and voice are resolved.
+    private struct NarrationOptions {
+        var streaming: Bool
+        var timings: Bool
+        var controls: Bool
+        var announcePause: Bool
+        var sampling: MLXTTSSampling
+        var speed: Float
     }
 
     private static func speak(
-        _ text: String,
+        _ blocks: [SpeechNarrationBlock],
         options: VoiceSayOptions,
+        narration: NarrationOptions,
         quiet: Bool,
-        wait: Bool
+        wait: Bool,
+        notification: NotificationMessage?
     ) async throws {
         // The MLX runtime prints model diagnostics to stdout. Speaking produces
         // no stdout output of its own, so redirect the descriptor to stderr and
@@ -191,19 +318,25 @@ struct VoiceSay: AsyncParsableCommand {
 
         // Skipping is the requested behaviour, not a failure, so the result is
         // discarded and the exit status stays 0.
-        try await SpeechLock.withLock(
+        try await VoiceSayNotificationFlow.run(
+            message: notification,
             whenBusy: wait ? .wait : .skip,
             onContended: {
                 guard !quiet else { return }
                 note(busyMessage)
             },
-            body: { try await synthesize(text, options: options, quiet: quiet) }
+            report: { note($0) },
+            post: { try await NotificationClient.send(.post($0)) },
+            speak: {
+                try await synthesize(blocks, options: options, narration: narration, quiet: quiet)
+            }
         )
     }
 
     private static func synthesize(
-        _ text: String,
+        _ blocks: [SpeechNarrationBlock],
         options: VoiceSayOptions,
+        narration: NarrationOptions,
         quiet: Bool
     ) async throws {
         if !quiet {
@@ -213,18 +346,98 @@ struct VoiceSay: AsyncParsableCommand {
                 "using \(options.checkpoint.displayName) · "
                     + "\(describe(options.configuration))"
             )
+            if let second = MLXNarrationVoices.cast(narrator: options.configuration).secondSpeaker,
+                blocks.contains(where: { $0.role != .narrator })
+            {
+                note("headings, quotes, and asides: voice \(second.displayName)")
+            }
+            let seed = narration.sampling.seed.map { " · seed \($0)" } ?? ""
+            let speed = narration.speed == 1 ? "" : " · speed \(narration.speed)x"
+            note("temperature \(narration.sampling.temperature ?? 0.9)\(seed)\(speed)")
         }
         let output = MLXSpeechOutput(
             checkpoint: options.checkpoint,
             configuration: options.configuration,
+            sampling: narration.sampling,
+            playbackRate: narration.speed,
             onPreparation: { stage in
                 guard !quiet else { return }
                 report(stage)
             }
         )
-        try await output.prepare()
-        try await output.speak(text, voiceIdentifier: nil)
+        do {
+            let started = ContinuousClock.now
+            try await output.prepare()
+            if narration.timings {
+                let elapsed = started.duration(to: .now) / .seconds(1)
+                note(String(format: "model preparation: %.2fs", elapsed))
+            }
+            let terminal = narration.controls ? VoiceSayTerminal() : nil
+            defer { terminal?.stop() }
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                if let terminal {
+                    group.addTask {
+                        await listenForPause(
+                            terminal, output: output, announce: narration.announcePause
+                        )
+                    }
+                }
+                defer { group.cancelAll() }
+                try await output.narrate(
+                    blocks, streaming: narration.streaming,
+                    onStart: {
+                        if terminal?.start() == true, !quiet {
+                            note("Space: pause/resume · Ctrl-C: stop")
+                        }
+                    },
+                    onTiming: { timing in
+                        guard narration.timings else { return }
+                        let format =
+                            "segment %d (%@): synthesis %.2fs · audio %.2fs · trimmed %.2fs"
+                            + " · longest internal quiet %.2fs · queue wait %.2fs"
+                            + " · playback idle total %.2fs"
+                        note(
+                            String(
+                                format: format,
+                                timing.index, timing.role.rawValue,
+                                timing.generationSeconds, timing.audioSeconds,
+                                timing.trimmedSeconds, timing.longestInternalSilenceSeconds,
+                                timing.queueWaitSeconds, timing.playbackIdleSeconds
+                            )
+                        )
+                    },
+                    onSkipped: { index, reason in
+                        note("skipped segment \(index) (\(reason.rawValue))")
+                    }
+                )
+            }
+        } catch {
+            await output.unload()
+            throw error
+        }
         await output.unload()
+    }
+
+    private static func listenForPause(
+        _ terminal: VoiceSayTerminal, output: MLXSpeechOutput, announce: Bool
+    ) async {
+        let feedback = announce ? await AppleSpeechOutput() : nil
+        var announcement: Task<Void, Never>?
+        for await _ in terminal.spaces {
+            guard !Task.isCancelled else { break }
+            announcement?.cancel()
+            _ = await announcement?.result
+            let paused = await output.togglePause()
+            note(paused ? "Paused — Space to resume" : "Resumed")
+            if paused, let feedback {
+                announcement = Task {
+                    _ = try? await feedback.speak("Paused", voiceIdentifier: nil)
+                }
+            }
+        }
+        announcement?.cancel()
+        _ = await announcement?.result
+        await feedback?.stopImmediately()
     }
 
     /// Progress goes to stderr so stdout stays clean for pipelines. A download
@@ -252,13 +465,29 @@ struct VoiceSay: AsyncParsableCommand {
     }
 
     /// Operands win; otherwise read stdin so `... | voice-say` works.
-    private static func resolveText(_ words: [String]) -> String? {
+    func resolveInput() throws -> (blocks: [SpeechNarrationBlock], streaming: Bool) {
+        let text = try Self.resolveText(words, file: file)
+        let fromOperands = !words.isEmpty
+        let blocks =
+            fromOperands
+            ? (text.isEmpty ? [] : [SpeechNarrationBlock(role: .narrator, text: text)])
+            : VoiceSayDocument.blocks(from: text)
+        guard !blocks.isEmpty else {
+            throw ValidationError(
+                "No speakable text remains. Pass text, use --file, or pipe it on stdin.")
+        }
+        return (blocks, fromOperands || stream)
+    }
+
+    static func resolveText(_ words: [String], file: String? = nil) throws -> String {
+        if let file, file != "-" {
+            let path = (file as NSString).expandingTildeInPath
+            return try VoiceSayInput.readFile(path)
+        }
         if !words.isEmpty {
             return words.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        let data = FileHandle.standardInput.readDataToEndOfFile()
-        guard let piped = String(data: data, encoding: .utf8) else { return nil }
-        return piped.trimmingCharacters(in: .whitespacesAndNewlines)
+        return try VoiceSayInput.read(.standardInput)
     }
 
     private static func describe(_ configuration: MLXVoiceConfiguration) -> String {

@@ -60,15 +60,51 @@ public struct MLXTTSVoiceRequest: Sendable {
     public let voiceInstruction: String?
     public let referenceAudioURL: URL?
     public let referenceTranscript: String?
+    public let sampling: MLXTTSSampling
 
     public init(
         voiceInstruction: String? = nil,
         referenceAudioURL: URL? = nil,
-        referenceTranscript: String? = nil
+        referenceTranscript: String? = nil,
+        sampling: MLXTTSSampling = MLXTTSSampling()
     ) {
         self.voiceInstruction = voiceInstruction
         self.referenceAudioURL = referenceAudioURL
         self.referenceTranscript = referenceTranscript
+        self.sampling = sampling
+    }
+}
+
+/// Overrides for the model's own sampling defaults. Each utterance is sampled
+/// afresh, so these decide how much one utterance can differ from the last:
+/// a lower temperature and a top-k cut keep pitch and energy close between
+/// utterances, at the cost of flatter delivery. A `nil` field keeps the
+/// checkpoint's default.
+public struct MLXTTSSampling: Equatable, Sendable {
+    public let temperature: Float?
+    public let topK: Int?
+    public let topP: Float?
+    /// Restarts the sampler from the same state for every utterance, so a
+    /// document narrates the same way twice and each utterance's opening
+    /// frames, where the voice settles, draw the same noise.
+    public let seed: UInt64?
+
+    public init(
+        temperature: Float? = nil, topK: Int? = nil, topP: Float? = nil, seed: UInt64? = nil
+    ) {
+        self.temperature = temperature
+        self.topK = topK
+        self.topP = topP
+        self.seed = seed
+    }
+
+    func parameters(from defaults: GenerateParameters) -> GenerateParameters {
+        var parameters = defaults
+        if let temperature { parameters.temperature = temperature }
+        if let topK { parameters.topK = topK }
+        if let topP { parameters.topP = topP }
+        if let seed { parameters.seed = seed }
+        return parameters
     }
 }
 
@@ -400,6 +436,13 @@ public actor MLXTTSRuntime {
         language: String
     ) throws -> AsyncThrowingStream<[Float], Error> {
         let model = session.model
+        let parameters = request.sampling.parameters(from: model.defaultGenerationParameters)
+        // Qwen3-TTS samples through MLX's global random state rather than the
+        // seed carried in the parameters, so a requested seed is applied to
+        // both. Synthesis is serialized, so nothing else draws in between.
+        if let seed = request.sampling.seed {
+            MLXRandom.seed(seed)
+        }
         guard let referenceAudioURL = request.referenceAudioURL else {
             return model.generateSamplesStream(
                 text: text,
@@ -407,6 +450,7 @@ public actor MLXTTSRuntime {
                 refAudio: nil,
                 refText: nil,
                 language: language,
+                generationParameters: parameters,
                 streamingInterval: 1.0
             )
         }
@@ -425,6 +469,7 @@ public actor MLXTTSRuntime {
                 refAudio: referenceAudio,
                 refText: referenceTranscript,
                 language: language,
+                generationParameters: parameters,
                 streamingInterval: 1.0
             )
         }
@@ -438,7 +483,7 @@ public actor MLXTTSRuntime {
         let stream = qwen3.generateStream(
             text: text,
             conditioning: conditioning,
-            generationParameters: qwen3.defaultGenerationParameters,
+            generationParameters: parameters,
             streamingInterval: 1.0
         )
         return AsyncThrowingStream { continuation in

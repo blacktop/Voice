@@ -1,4 +1,5 @@
 import Foundation
+internal import MLXLMCommon
 import Testing
 
 @testable import VoiceMLXRuntime
@@ -22,6 +23,25 @@ struct MLXTTSRuntimeTests {
         #expect(throws: (any Error).self) {
             try MLXTTSRuntime.modelType(in: directory.appendingPathComponent("missing"))
         }
+    }
+
+    @Test
+    func samplingOverridesOnlyTheFieldsGiven() {
+        var defaults = GenerateParameters(
+            maxTokens: 4096, temperature: 0.9, topP: 1.0, repetitionPenalty: 1.05)
+        defaults.seed = 42
+        let untouched = MLXTTSSampling().parameters(from: defaults)
+        #expect(untouched.temperature == 0.9)
+        #expect(untouched.topK == 0)
+        #expect(untouched.seed == 42)
+        #expect(untouched.repetitionPenalty == 1.05)
+
+        let steady = MLXTTSSampling(temperature: 0.4, topK: 50, seed: 7).parameters(from: defaults)
+        #expect(steady.temperature == 0.4)
+        #expect(steady.topK == 50)
+        #expect(steady.topP == 1.0)
+        #expect(steady.seed == 7)
+        #expect(steady.maxTokens == 4096, "checkpoint limits survive a sampling override")
     }
 
     @Test

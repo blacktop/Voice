@@ -1,7 +1,10 @@
 import SwiftUI
+import VoiceNotifications
 
 @main
 struct VoiceApplication: App {
+    @NSApplicationDelegateAdaptor(VoiceNotificationAppDelegate.self)
+    private var notificationDelegate
     @State private var model = VoiceAppModel()
 
     var body: some Scene {

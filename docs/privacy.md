@@ -18,6 +18,9 @@
 | Voice-clone reference clip | Local file chosen by the user, read by the local Qwen3-TTS Base model | Never uploaded; conditioned in memory per session; the file path and transcript persist in `UserDefaults` |
 | Local history | App support file | Off by default; AES-GCM; bounded to 500 entries; disabling history does not delete existing data |
 | History key | macOS Keychain | `WhenUnlockedThisDeviceOnly` |
+| Agent notification text and tmux click target | Local signed Voice app over a private Unix socket, then macOS Notification Center | System-managed notification retention; repeated group replaces the prior notification |
+| Optional phone notification | Explicitly configured ntfy HTTPS server | Provider configuration and retention policy apply; no request without `--push` or `--notify-push` |
+| ntfy destination and access token | Voice's macOS Keychain | `WhenUnlockedThisDeviceOnly`; replaced by `configure-push`; not synchronized |
 | Export | User-selected path | Explicit user action only |
 
 Direct Accessibility insertion is the default and remains bound to the exact
@@ -30,17 +33,39 @@ captured element is still focused before every grapheme event and aborts without
 refocusing if it changed. Focus can still change within the target process in
 the small interval between validation and event delivery.
 
-Voice does not inspect shell startup files, credentials, or environment
-variables. The MLX downloader uses public Hugging Face infrastructure,
+Voice does not inspect shell startup files or unrelated credentials. The
+notification CLIs read only their explicit `VOICE_NOTIFY_NTFY_*` overrides and
+the `TMUX`/`TMUX_PANE` context needed for click handling. The MLX downloader uses
+public Hugging Face infrastructure,
 including storage and CDN endpoints, with no bearer token and an app-specific
 Application Support model store that is excluded from backups. Qwen and Granite
 tokenizers are parsed through an explicitly offline, cacheless client with a
 fixed empty token, avoiding the dependency's environment-aware shared default.
-Network access occurs only after an MLX model is explicitly selected. Requests
-are limited to public model metadata and model files; Voice sends no audio,
+MLX network access occurs only after a model is explicitly selected. Its requests
+are limited to public model metadata and model files; the downloader sends no audio,
 transcripts, vocabulary, or project files.
 Downloaded weights live under
 `~/Library/Application Support/io.blacktop.Voice/MLXModels`.
+
+Agent notifications have a separate, explicit network boundary. The Mac path
+authenticates the socket server's kernel audit token against the installed
+Voice app's signing requirement before transmitting text or credentials. The
+app also checks each client's kernel audit token against its Apple-anchored
+signing-team requirement before reading a request. The service accepts only the
+same local user, bounds request sizes and concurrent connections, and does not log
+notification text or tokens. At click time it checks the recorded tmux server
+process identity before selecting the pane. No arbitrary click command is stored.
+
+With phone push enabled, the selected ntfy provider receives the title, body,
+subtitle, topic, bearer token, and connection metadata. Its operators and server
+retention settings are a separate trust boundary. Use an authenticated private
+topic; an obscure topic name alone is not access control. Self-hosted ntfy may
+use an upstream ntfy server and Apple's push infrastructure to wake the iOS app;
+the [documented relay](https://docs.ntfy.sh/config/#ios-instant-notifications)
+sends a poll request containing the message ID, and the phone then fetches the
+message from the configured server. Voice sends no audio or tmux click command
+through this path. HTTPS redirects are rejected, and a server override cannot
+reuse a saved token for a different destination.
 
 The same-audio comparison mode does not widen that network boundary: it
 uses only model snapshots already present in this store, runs one candidate at

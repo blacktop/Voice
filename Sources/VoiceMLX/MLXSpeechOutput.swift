@@ -143,6 +143,14 @@ public enum MLXSpeechVoice: String, CaseIterable, Identifiable, Sendable {
 
     public var displayName: String { rawValue }
 
+    /// The checkpoint's other speaker, who reads what the narrator does not.
+    public var counterpart: MLXSpeechVoice {
+        switch self {
+        case .ryan: .aiden
+        case .aiden: .ryan
+        }
+    }
+
     /// Breeze TTS 2 has no preset speakers; the app seeds a described voice
     /// from this when switching engines away from a preset.
     public var designInstruction: String {
@@ -186,19 +194,31 @@ extension MLXTTSRuntime: MLXTTSRuntimeServing {}
 public actor MLXSpeechOutput: SpeechOutputting {
     public typealias PreparationHandler = @Sendable (MLXModelPreparationStage) -> Void
 
+    /// The Qwen3-TTS reference implementation samples with top-k 50; the
+    /// Swift port's own default disables the cut. Everything else stays at
+    /// the loaded checkpoint's defaults.
+    public static let defaultSampling = MLXTTSSampling(topK: 50)
+
     private let runtime: any MLXTTSRuntimeServing
     private let checkpoint: MLXSpeechCheckpoint
-    private let player = SpeechChunkPlayer()
+    private let player: any SpeechChunkPlaying
+    private let sampling: MLXTTSSampling
     private var configuration: MLXVoiceConfiguration
     private var speakTask: Task<Void, Error>?
     private var speakToken: UUID?
 
+    /// `playbackRate` stretches time without changing pitch: 1.2 reads a
+    /// fifth faster and shortens every rest by the same factor.
     public init(
         checkpoint: MLXSpeechCheckpoint,
         configuration: MLXVoiceConfiguration,
+        sampling: MLXTTSSampling = MLXSpeechOutput.defaultSampling,
+        playbackRate: Float = 1,
         onPreparation: @escaping PreparationHandler = { _ in }
     ) {
         self.configuration = configuration
+        self.sampling = sampling
+        player = SpeechChunkPlayer(rate: playbackRate)
         self.checkpoint = checkpoint
         runtime = MLXTTSRuntime(
             configuration: MLXTTSConfiguration(
@@ -215,11 +235,15 @@ public actor MLXSpeechOutput: SpeechOutputting {
     init(
         runtime: any MLXTTSRuntimeServing,
         configuration: MLXVoiceConfiguration,
-        checkpoint: MLXSpeechCheckpoint = .customVoiceSmall
+        checkpoint: MLXSpeechCheckpoint = .customVoiceSmall,
+        sampling: MLXTTSSampling = MLXSpeechOutput.defaultSampling,
+        player: any SpeechChunkPlaying = SpeechChunkPlayer()
     ) {
         self.runtime = runtime
+        self.player = player
         self.configuration = configuration
         self.checkpoint = checkpoint
+        self.sampling = sampling
     }
 
     /// Downloads the pinned snapshot if needed and loads it into memory.
@@ -236,8 +260,47 @@ public actor MLXSpeechOutput: SpeechOutputting {
     /// `voiceIdentifier` selects Apple system voices and is ignored here; the
     /// MLX voice is chosen with `setConfiguration`.
     public func speak(_ text: String, voiceIdentifier _: String?) async throws {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        try await speak(
+            [SpeechNarrationBlock(role: .narrator, text: text)],
+            streaming: true, onStart: {}, onTiming: { _ in }, onSkipped: { _, _ in }
+        )
+    }
+
+    /// CLI narration: each block is read in the voice cast for its role. By
+    /// default paragraph-sized groups are synthesized ahead of playback and
+    /// only their quiet edges are normalized; `streaming` plays raw model
+    /// chunks as the app does.
+    public func narrate(
+        _ blocks: [SpeechNarrationBlock],
+        streaming: Bool = false,
+        onStart: @escaping @Sendable () -> Void = {},
+        onTiming: @escaping @Sendable (SpeechSegmentTiming) -> Void = { _ in },
+        onSkipped: @escaping @Sendable (Int, SpeechSegmentSkipReason) -> Void = { _, _ in }
+    ) async throws {
+        try await speak(
+            blocks, streaming: streaming, onStart: onStart, onTiming: onTiming,
+            onSkipped: onSkipped)
+    }
+
+    /// Pauses the player timeline without discarding its scheduled buffers.
+    /// Synthesis can fill the existing bounded queue, then waits for playback.
+    public func togglePause() -> Bool {
+        guard speakTask != nil else { return false }
+        return player.togglePause()
+    }
+
+    private func speak(
+        _ blocks: [SpeechNarrationBlock],
+        streaming: Bool,
+        onStart: @escaping @Sendable () -> Void,
+        onTiming: @escaping @Sendable (SpeechSegmentTiming) -> Void,
+        onSkipped: @escaping @Sendable (Int, SpeechSegmentSkipReason) -> Void
+    ) async throws {
+        let utterances = Self.utterances(
+            for: blocks, voices: .cast(narrator: configuration), sampling: sampling,
+            streaming: streaming
+        )
+        guard !utterances.isEmpty else { return }
         if checkpoint.family == .breeze, case .preset = configuration {
             throw MLXSpeechOutputError.presetVoiceUnsupported(checkpoint)
         }
@@ -245,41 +308,21 @@ public actor MLXSpeechOutput: SpeechOutputting {
 
         let token = UUID()
         speakToken = token
-        // Long text is synthesized in segments: generation drifts if one
-        // utterance runs too long. Each segment is enqueued as it is produced,
-        // so playback of earlier segments overlaps synthesis of later ones and
-        // the speech stays continuous.
-        let segments = SpeechTextSegmenter.segments(for: trimmed)
-        let request = Self.voiceRequest(for: configuration)
         let runtime = runtime
         let player = player
         let task = Task {
-            var producedAudio = false
-            for segment in segments {
-                try Task.checkCancellation()
-                let chunks = try await runtime.synthesize(
-                    text: segment,
-                    request: request,
-                    language: "English"
-                )
-                for try await chunk in chunks {
-                    try Task.checkCancellation()
-                    try await player.enqueue(
-                        samples: chunk.samples,
-                        sampleRate: chunk.sampleRate
-                    )
-                    producedAudio = true
-                }
-            }
-            try Task.checkCancellation()
-            guard producedAudio else {
-                throw MLXSpeechOutputError.noAudioProduced
-            }
-            try await player.awaitPlaybackCompletion()
+            try await SpeechNarration.run(
+                utterances: utterances, runtime: runtime, player: player, streaming: streaming,
+                onTiming: onTiming, onSkipped: onSkipped)
         }
         speakTask = task
+        onStart()
         do {
-            try await task.value
+            try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
         } catch {
             // A different token means a newer speaker already took over the
             // player (and stopped this one); tearing it down here would cut
@@ -315,29 +358,68 @@ public actor MLXSpeechOutput: SpeechOutputting {
         await runtime.unload()
     }
 
+    /// Segments each block and casts its voice. Blocks are paragraph-sized,
+    /// so within the budget each is one utterance and the voice cannot change
+    /// inside it; the rest after a block comes from its role. Streaming plays
+    /// raw model chunks, so rests are not inserted there.
+    static func utterances(
+        for blocks: [SpeechNarrationBlock], voices: MLXNarrationVoices,
+        sampling: MLXTTSSampling = defaultSampling, streaming: Bool
+    ) -> [SpeechUtterance] {
+        var result: [SpeechUtterance] = []
+        for block in blocks {
+            let request = voiceRequest(
+                for: voices.configuration(for: block.role), sampling: sampling)
+            let segments: [SpeechTextSegmenter.NarrationSegment] =
+                streaming
+                ? SpeechTextSegmenter.segments(for: block.text).map {
+                    SpeechTextSegmenter.NarrationSegment(text: $0, pauseAfter: 0)
+                }
+                : SpeechTextSegmenter.narration(for: block.text)
+            for (index, segment) in segments.enumerated() {
+                let last = index == segments.count - 1
+                let rest = last && !streaming ? block.role.pauseAfter : segment.pauseAfter
+                result.append(
+                    SpeechUtterance(
+                        text: segment.text, role: block.role, request: request, pauseAfter: rest
+                    )
+                )
+            }
+        }
+        if let final = result.popLast() {
+            result.append(
+                SpeechUtterance(
+                    text: final.text, role: final.role, request: final.request, pauseAfter: 0
+                )
+            )
+        }
+        return result
+    }
+
     /// Builds the runtime request for a configuration. A preset with a style
     /// becomes "Ryan, calm and slow." per the Qwen3-TTS prompt convention.
     static func voiceRequest(
-        for configuration: MLXVoiceConfiguration
+        for configuration: MLXVoiceConfiguration, sampling: MLXTTSSampling = defaultSampling
     ) -> MLXTTSVoiceRequest {
         switch configuration {
         case .preset(let voice, let style):
             guard let style = Self.normalized(style) else {
-                return MLXTTSVoiceRequest(voiceInstruction: voice.rawValue)
+                return MLXTTSVoiceRequest(voiceInstruction: voice.rawValue, sampling: sampling)
             }
             let punctuated = style.hasSuffix(".") ? style : style + "."
             return MLXTTSVoiceRequest(
-                voiceInstruction: "\(voice.rawValue), \(punctuated)"
+                voiceInstruction: "\(voice.rawValue), \(punctuated)", sampling: sampling
             )
         case .designed(let description):
             return MLXTTSVoiceRequest(
-                voiceInstruction: Self.normalized(description)
+                voiceInstruction: Self.normalized(description), sampling: sampling
             )
         case .cloned(let referenceAudioURL, let transcript, let style):
             return MLXTTSVoiceRequest(
                 voiceInstruction: Self.normalized(style),
                 referenceAudioURL: referenceAudioURL,
-                referenceTranscript: transcript
+                referenceTranscript: transcript,
+                sampling: sampling
             )
         }
     }
@@ -366,7 +448,7 @@ public actor MLXSpeechOutput: SpeechOutputting {
 /// Schedules Float32 mono chunks onto one AVAudioPlayerNode as they arrive.
 /// AVAudioPlayerNode invokes completion handlers on an internal queue, so
 /// player and buffer-credit state are independently locked.
-final class SpeechChunkPlayer: @unchecked Sendable {
+final class SpeechChunkPlayer: SpeechChunkPlaying, @unchecked Sendable {
     // Enough queued chunks to hide scheduling jitter without allowing
     // synthesis to retain an entire long response ahead of playback.
     private static let maximumScheduledBufferCount = 4
@@ -375,9 +457,19 @@ final class SpeechChunkPlayer: @unchecked Sendable {
     private let bufferQueue = PlaybackBufferQueue(
         capacity: SpeechChunkPlayer.maximumScheduledBufferCount
     )
+    private let rate: Float
     private var engine: AVAudioEngine?
     private var node: AVAudioPlayerNode?
     private var format: AVAudioFormat?
+    private var isPaused = false
+
+    /// `rate` is a playback speed multiplier applied by a pitch-preserving
+    /// time stretch; 1 plays the model's audio as generated.
+    init(rate: Float = 1) {
+        self.rate = rate
+    }
+
+    var idleSeconds: Double { bufferQueue.idleSeconds }
 
     func enqueue(samples: [Float], sampleRate: Double) async throws {
         guard !samples.isEmpty else { return }
@@ -395,7 +487,7 @@ final class SpeechChunkPlayer: @unchecked Sendable {
                 ) { [weak self] _ in
                     self?.bufferQueue.complete(reservation)
                 }
-                node.play()
+                if !isPaused { node.play() }
             }
         } catch {
             bufferQueue.complete(reservation)
@@ -409,12 +501,26 @@ final class SpeechChunkPlayer: @unchecked Sendable {
         try await bufferQueue.awaitDrain()
     }
 
+    func togglePause() -> Bool {
+        withLock {
+            isPaused.toggle()
+            bufferQueue.setPaused(isPaused)
+            if isPaused {
+                node?.pause()
+            } else {
+                node?.play()
+            }
+            return isPaused
+        }
+    }
+
     func stop() {
         let (node, engine) = withLock {
             let captured = (self.node, self.engine)
             self.node = nil
             self.engine = nil
             format = nil
+            isPaused = false
             return captured
         }
         // Stopping can fire completion handlers synchronously, so invalidate
@@ -436,7 +542,18 @@ final class SpeechChunkPlayer: @unchecked Sendable {
         let engine = AVAudioEngine()
         let node = AVAudioPlayerNode()
         engine.attach(node)
-        engine.connect(node, to: engine.mainMixerNode, format: format)
+        if rate == 1 {
+            engine.connect(node, to: engine.mainMixerNode, format: format)
+        } else {
+            // A larger overlap costs a little CPU and keeps stretched speech
+            // free of the warble the default window shows above about 1.3x.
+            let stretch = AVAudioUnitTimePitch()
+            stretch.rate = rate
+            stretch.overlap = 16
+            engine.attach(stretch)
+            engine.connect(node, to: stretch, format: format)
+            engine.connect(stretch, to: engine.mainMixerNode, format: format)
+        }
         try engine.start()
         self.engine = engine
         self.node = node

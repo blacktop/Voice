@@ -115,6 +115,21 @@ final class MLXSpeechOutputTests: XCTestCase {
         let plain = MLXSpeechOutput.voiceRequest(for: .preset(.ryan, style: nil))
         XCTAssertEqual(plain.voiceInstruction, "Ryan")
         XCTAssertNil(plain.referenceAudioURL)
+        XCTAssertEqual(plain.sampling, MLXTTSSampling(topK: 50))
+
+        let steady = MLXTTSSampling(temperature: 0.5, topK: 50, seed: 42)
+        let seeded = MLXSpeechOutput.voiceRequest(
+            for: .designed(description: "a narrator"), sampling: steady)
+        XCTAssertEqual(seeded.sampling, steady)
+        let utterances = MLXSpeechOutput.utterances(
+            for: [
+                SpeechNarrationBlock(role: .heading, text: "Title"),
+                SpeechNarrationBlock(role: .narrator, text: "Body."),
+            ],
+            voices: .cast(narrator: .preset(.ryan, style: nil)), sampling: steady,
+            streaming: false
+        )
+        XCTAssertEqual(utterances.map(\.request.sampling), [steady, steady])
 
         let styled = MLXSpeechOutput.voiceRequest(
             for: .preset(.aiden, style: "  calm and slow ")
@@ -175,13 +190,26 @@ final class MLXSpeechOutputTests: XCTestCase {
     }
 
     func testStopDuringSynthesisStartupPreventsLatePlayback() async throws {
+        try await checkStopDuringSynthesisStartup(narration: false)
+    }
+
+    func testStopDuringNarrationStartupPreventsLatePlayback() async throws {
+        try await checkStopDuringSynthesisStartup(narration: true)
+    }
+
+    private func checkStopDuringSynthesisStartup(narration: Bool) async throws {
         let runtime = SuspendingMLXTTSRuntime()
         let output = MLXSpeechOutput(
             runtime: runtime,
             configuration: .preset(.ryan, style: nil)
         )
         let speech = Task {
-            try await output.speak("Do not play this.", voiceIdentifier: nil)
+            if narration {
+                try await output.narrate(
+                    [SpeechNarrationBlock(role: .narrator, text: "Do not play this.")])
+            } else {
+                try await output.speak("Do not play this.", voiceIdentifier: nil)
+            }
         }
         await runtime.waitUntilSynthesisStarts()
 
@@ -213,7 +241,12 @@ final class MLXSpeechOutputTests: XCTestCase {
         let sentence = "The build finished and every check passed."
         let text = Array(repeating: sentence, count: 20).joined(separator: " ")
 
-        try await output.speak(text, voiceIdentifier: nil)
+        do {
+            try await output.speak(text, voiceIdentifier: nil)
+            XCTFail("the recording runtime produces no audio")
+        } catch let error as MLXSpeechOutputError {
+            XCTAssertEqual(error, .noAudioProduced)
+        }
 
         // Asserted against the text itself rather than against
         // `SpeechTextSegmenter.segments(for:)`, which is what the code under

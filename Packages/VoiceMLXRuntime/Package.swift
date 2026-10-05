@@ -9,12 +9,14 @@ let package = Package(
         .library(name: "VoiceMLXRuntime", targets: ["VoiceMLXRuntime"])
     ],
     dependencies: [
-        // Pinned to a main commit rather than a tag: Breeze TTS 2 support
-        // (#255, 2026-09-02) has not been tagged yet. Move back to `exact:`
-        // at the next release that includes it.
+        // A fork of upstream main at d20cbd66 (Breeze TTS 2, #255, untagged)
+        // plus one commit: the official non-streaming prompt layout for
+        // Qwen3-TTS CustomVoice / VoiceDesign, which keeps the speaking rate
+        // flat across a long utterance. Move back to upstream `exact:` at the
+        // next release that includes both.
         .package(
-            url: "https://github.com/Blaizzy/mlx-audio-swift.git",
-            revision: "d20cbd660424c9f202363306ef4ff4595a199356"
+            url: "https://github.com/blacktop/mlx-audio-swift.git",
+            revision: "c1b0cbf21cc105a1a6e81509f9dfa2df9ea0500d"
         ),
         .package(
             url: "https://github.com/ml-explore/mlx-swift.git",

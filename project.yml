@@ -29,6 +29,17 @@ packages:
     url: https://github.com/apple/swift-argument-parser
     exactVersion: 1.8.2
 targets:
+  VoiceNotifications:
+    type: library.static
+    platform: macOS
+    sources:
+      - Sources/VoiceNotifications
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.blacktop.Voice.notifications
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+        SWIFT_INSTALL_OBJC_HEADER: NO
   VoiceCore:
     type: library.static
     platform: macOS
@@ -87,6 +98,7 @@ targets:
     sources:
       - Sources/VoiceApp
     dependencies:
+      - target: VoiceNotifications
       - target: VoiceCore
       - target: VoicePlatform
       - target: VoiceMLX
@@ -101,6 +113,10 @@ targets:
         copy:
           destination: executables
         codeSign: true
+      - target: VoiceNotify
+        copy:
+          destination: executables
+        codeSign: true
     info:
       path: Sources/VoiceApp/Info.plist
       properties:
@@ -111,6 +127,7 @@ targets:
         LSApplicationCategoryType: public.app-category.productivity
         LSUIElement: true
         NSHighResolutionCapable: true
+        NSUserNotificationAlertStyle: alert
         NSMicrophoneUsageDescription: Voice records audio while you hold the dictation key or explicitly record an on-device model comparison.
         NSSpeechRecognitionUsageDescription: Voice uses the selected on-device speech recognizer to turn your speech into text.
     settings:
@@ -142,6 +159,7 @@ targets:
     sources:
       - Sources/VoiceSay
     dependencies:
+      - target: VoiceNotifications
       - target: VoiceCore
       - target: VoicePlatform
       - target: VoiceMLX
@@ -156,17 +174,61 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
         CODE_SIGN_ENTITLEMENTS: Configs/VoiceSay.entitlements
+  VoiceNotify:
+    type: tool
+    platform: macOS
+    sources:
+      - Sources/VoiceNotify
+    dependencies:
+      - target: VoiceNotifications
+      - package: swift-argument-parser
+        product: ArgumentParser
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.blacktop.Voice.notify
+        PRODUCT_NAME: voice-notify
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+        CODE_SIGN_ENTITLEMENTS: Configs/VoiceNotify.entitlements
+  VoiceNotificationsTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/VoiceNotificationsTests
+    dependencies:
+      - target: VoiceNotifications
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+  VoiceNotifyTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/VoiceNotifyTests
+      - path: Sources/VoiceNotify/VoiceNotify.swift
+    dependencies:
+      - target: VoiceNotifications
+      - package: swift-argument-parser
+        product: ArgumentParser
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
   VoiceSayTests:
     type: bundle.unit-test
     platform: macOS
     sources:
       - Tests/VoiceSayTests
       - path: Sources/VoiceSay/VoiceSayOptions.swift
+      - path: Sources/VoiceSay/VoiceSayDocument.swift
+      - path: Sources/VoiceSay/VoiceSayInput.swift
+      - path: Sources/VoiceSay/VoiceSayTerminal.swift
+      - path: Sources/VoiceSay/VoiceSayNotifications.swift
       # Compiled in so validate(), parseVoice, and the ArgumentParser
       # configuration are reachable from tests; a .captureForPassthrough
       # regression here silently turned --help into speech once.
       - path: Sources/VoiceSay/VoiceSay.swift
     dependencies:
+      - target: VoiceNotifications
       - target: VoiceMLX
       - target: VoicePlatform
       - target: VoiceCore
@@ -223,12 +285,16 @@ schemes:
         VoicePlatformTests: [test]
         VoiceMLXTests: [test]
         VoiceSayTests: [test]
+        VoiceNotificationsTests: [test]
+        VoiceNotifyTests: [test]
     test:
       targets:
         - VoiceCoreTests
         - VoicePlatformTests
         - VoiceMLXTests
         - VoiceSayTests
+        - VoiceNotificationsTests
+        - VoiceNotifyTests
   VoiceBench:
     build:
       targets:
@@ -237,3 +303,7 @@ schemes:
     build:
       targets:
         VoiceSay: all
+  VoiceNotify:
+    build:
+      targets:
+        VoiceNotify: all

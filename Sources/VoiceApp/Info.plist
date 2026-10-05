@@ -30,5 +30,7 @@
 	<string>Voice records audio while you hold the dictation key or explicitly record an on-device model comparison.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Voice uses the selected on-device speech recognizer to turn your speech into text.</string>
+	<key>NSUserNotificationAlertStyle</key>
+	<string>alert</string>
 </dict>
 </plist>

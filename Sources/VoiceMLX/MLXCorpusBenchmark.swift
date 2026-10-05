@@ -128,10 +128,7 @@ public enum MLXCorpusBenchmark {
                     samples: audio.samples,
                     contextualStrings: contextualStrings
                 )
-                let elapsed = ContinuousClock.now - started
-                let seconds =
-                    Double(elapsed.components.seconds)
-                    + Double(elapsed.components.attoseconds) / 1e18
+                let seconds = (ContinuousClock.now - started) / .seconds(1)
                 clipResults.append(
                     MLXCorpusClipResult(
                         clipName: clip.name,

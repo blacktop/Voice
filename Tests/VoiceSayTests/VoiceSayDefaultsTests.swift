@@ -48,6 +48,33 @@ final class VoiceSayDefaultsTests: XCTestCase {
         XCTAssertEqual(resolve().tier, .small)
     }
 
+    func testBreezeAppPreferenceRequiresExplicitCLIOptIn() throws {
+        let preferences = VoicePreferences(defaults: defaults)
+        preferences.setSpeechBackendIdentifier("breeze-tts-2-4bit")
+        preferences.setMLXSpeechVoiceIdentifier("Aiden")
+        preferences.setMLXVoiceDescription("a warm narrator")
+        preferences.setMLXCloneReferencePath("/tmp/ref.wav")
+        preferences.setMLXCloneTranscript("the exact words")
+        preferences.setMLXVoiceStyle("calm")
+
+        for mode in ["designed", "cloned"] {
+            preferences.setMLXVoiceModeIdentifier(mode)
+            let inherited = resolve()
+            XCTAssertNil(inherited.description)
+            XCTAssertNil(inherited.cloneURL)
+            XCTAssertNil(inherited.cloneTranscript)
+            let implicit = try VoiceSayOptions(overrides: VoiceSayOverrides(), defaults: inherited)
+                .validated()
+            XCTAssertEqual(implicit.checkpoint, .customVoiceSmall)
+            XCTAssertEqual(implicit.configuration, .preset(.aiden, style: nil))
+        }
+        let explicit = try VoiceSayOptions(
+            overrides: VoiceSayOverrides(family: .breeze, description: "a warm narrator"),
+            defaults: resolve()
+        ).validated()
+        XCTAssertEqual(explicit.checkpoint, .breezeExperimental)
+    }
+
     func testVoiceIdentifierIsRestored() {
         VoicePreferences(defaults: defaults).setMLXSpeechVoiceIdentifier("Aiden")
         XCTAssertEqual(resolve().voice, .aiden)

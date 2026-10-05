@@ -214,7 +214,7 @@ public actor MLXModelBenchmark {
                     samples: audio.samples,
                     contextualStrings: contextualStrings
                 )
-                let duration = Self.seconds(since: started)
+                let duration = (ContinuousClock.now - started) / .seconds(1)
                 guard !decoded.text.isEmpty else {
                     throw MLXSpeechRecognizerError.modelOutputMissing
                 }
@@ -258,11 +258,4 @@ public actor MLXModelBenchmark {
         return MLXSpeechModel.allCases.filter { identifiers.contains($0.rawValue) }
     }
 
-    private nonisolated static func seconds(
-        since start: ContinuousClock.Instant
-    ) -> TimeInterval {
-        let duration = ContinuousClock.now - start
-        return Double(duration.components.seconds)
-            + Double(duration.components.attoseconds) / 1e18
-    }
 }

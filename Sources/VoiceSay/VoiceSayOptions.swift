@@ -4,7 +4,8 @@ import VoicePlatform
 
 /// The voice the app is configured to use. Reusing it means `voice-say` speaks
 /// in the same voice as Voice itself, and reuses the checkpoint the app has
-/// already downloaded, instead of pulling a second one.
+/// already downloaded, instead of pulling a second one. Breeze is opt-in for
+/// the CLI; an app preference for it falls back to Qwen3's small tier.
 struct VoiceSayDefaults: Equatable {
     var family: MLXSpeechModelFamily = .qwen3
     var tier: MLXSpeechModelTier = .small
@@ -32,9 +33,9 @@ struct VoiceSayDefaults: Equatable {
 
     static func fromAppPreferences(_ preferences: VoicePreferences) -> VoiceSayDefaults {
         var defaults = VoiceSayDefaults()
-        if let identifier = preferences.speechBackendIdentifier,
-            let backend = MLXSpeechBackendPreference(rawValue: identifier)
-        {
+        let backend = preferences.speechBackendIdentifier.flatMap(
+            MLXSpeechBackendPreference.init(rawValue:))
+        if let backend, backend != .breeze {
             defaults.family = backend.family
             defaults.tier = backend.tier
         }
@@ -43,6 +44,9 @@ struct VoiceSayDefaults: Equatable {
         {
             defaults.voice = voice
         }
+        // Falling back from Breeze must not silently select Qwen3 VoiceDesign
+        // or Base. An explicit --describe or --clone can still select a mode.
+        guard backend != .breeze else { return defaults }
         // Only the mode the app last used contributes its fields, so a stale
         // description does not silently override a preset voice.
         switch preferences.mlxVoiceModeIdentifier {

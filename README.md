@@ -6,9 +6,9 @@
 
 ## How it works
 
-Voice lives in the menu bar. Hold a key, speak, release: the text lands in
-the app you were using. Audio, recognition, cleanup, insertion, and speech
-synthesis never leave your Mac.
+Voice lives in the menu bar. Hold a key, speak, and release it to type into
+the app you're using. Audio stays on your Mac, and dictation, transcript
+cleanup, text insertion, and speech synthesis all run locally.
 
 - Hold **Right Option**, speak, release. Voice transcribes and types the
   result into the focused app. Left Option is ignored, so editor shortcuts
@@ -18,7 +18,7 @@ synthesis never leave your Mac.
 - Insertion stays bound to the exact element that had focus when you pressed
   the key, and Voice never presses Return for you.
 
-Planning connects dictation to an agent. Each agent has a stated boundary:
+In planning mode, Voice sends the finished transcript to the agent you choose:
 
 - **Apple On-Device** uses the system Foundation Model with no tools, no
   network, no project-file reads, and no persistent conversation state.
@@ -29,47 +29,63 @@ Planning connects dictation to an agent. Each agent has a stated boundary:
   stdio, with permission requests denied and no MCP servers supplied. If the
   agent needs login, Voice runs its terminal auth command and retries once.
 
-Only finalized text reaches an agent. While Voice speaks a response, Escape or
-**Stop Speaking** silences it without disconnecting.
-[`docs/privacy.md`](docs/privacy.md) lists every boundary in detail.
+Press Escape or **Stop Speaking** to interrupt a spoken response without
+disconnecting the agent. See [Privacy boundaries](docs/privacy.md) for what
+each backend can read, send, and retain.
 
 ## Requirements
 
 - To run: an Apple Silicon Mac on macOS 26 or later.
-- To build: an Xcode 27 beta. Voice uses macOS 27 SDK APIs, so the released
-  Xcode 26.x toolchain cannot compile it.
+- To build: Xcode 27 with the macOS 27 SDK. Xcode 26.x can't compile the
+  newer Speech APIs used here.
 
-## Build
+## Build and install
+
+Install the build tools and Metal compiler:
 
 ```fish
 brew install xcodegen just
 xcodebuild -downloadComponent MetalToolchain
-just build
-just test
 ```
 
-macOS ties permission grants to the app's code identity, so for anything
-beyond compile checks, sign with a stable identity. Put your Team ID in a
-local config once:
+Set your signing Team ID in the local config. A stable signing identity lets
+macOS retain Voice's permission grants across rebuilds:
 
 ```fish
-cp Configs/Project.local.xcconfig.example Configs/Project.local.xcconfig
+cp -n Configs/Project.local.xcconfig.example Configs/Project.local.xcconfig
 open -e Configs/Project.local.xcconfig
-just release-signed
-open .build/DerivedData-Release/Build/Products/Release/Voice.app
 ```
 
-Without that file, builds fall back to ad-hoc signing, whose identity changes
-every rebuild; Microphone, Accessibility, and Input Monitoring grants will not
-stick. Every recipe runs through `scripts/xcbuild.sh`, which recovers from an
-Xcode 27 explicit-modules bug by clearing DerivedData and rebuilding once when
-the "Clang dependency scanning failure" appears.
+Then test and install:
 
-Every build is arm64e with Hardened Runtime and the macOS 26 Enhanced Security
-suite: pointer authentication, typed allocators, and the hard-mode Memory
-Integrity Enforcement entitlements (hardened heap, checked allocations,
-read-only dyld state, platform restrictions). `just verify-security` proves
-that on the built product, and `just install-app` runs it before installing.
+```fish
+just test
+just install
+```
+
+`just install` builds the signed Release app, installs it in `/Applications`,
+relaunches it, and installs `voice-say` and `voice-notify` under `~/.local/bin`.
+To install one component, use `just install-app`, `just install-cli`
+(voice-say), or `just install-notify`. The CLI recipes and `just install`
+accept a different bin directory as an argument.
+If an older copy takes precedence on PATH, invoke the new tools explicitly as
+`~/.local/bin/voice-say` or `~/.local/bin/voice-notify`.
+
+For development, `just build` makes a Debug build and `just release-signed`
+makes a signed Release build without installing it. `just release` can fall
+back to ad-hoc signing when no valid signing identity is available. Ad-hoc
+builds are useful for compile checks, but their changing identity means
+Microphone, Accessibility, and Input Monitoring grants won't stick.
+
+The build recipes use `scripts/xcbuild.sh` to recover from an Xcode 27
+explicit-modules bug. If the module scanner fails, the script clears that
+build's DerivedData and retries once.
+
+`just verify-security` checks the signed Release app for arm64e, Hardened
+Runtime, Enhanced Security v2, and the hard-mode Memory Integrity Enforcement
+entitlements: hardened heap, checked allocations, read-only dyld state, and
+platform restrictions. `just install-app` runs the same audit before copying
+the app.
 
 ## First run
 
@@ -78,20 +94,20 @@ If the Event tap row does not read **Ready** after you change Privacy &
 Security, quit and reopen Voice. Then focus a text field, hold Right Option
 until the overlay says **Listening**, speak, and release.
 
-Insertion tries the Accessibility API first. Terminals that reject it (cmux,
-Ghostty, Zed) get process-targeted key events instead, one grapheme at a time
-so their event loops do not drop characters. This fallback is on by default
-and costs nothing for apps that accept direct insertion.
+Voice tries Accessibility insertion first. When an app such as cmux, Ghostty,
+or Zed doesn't support it, Voice sends key events to that process one grapheme
+at a time. This fallback is enabled by default and only runs when direct
+insertion is unavailable.
 
 Pick a project in Settings to build a speech vocabulary from its file names.
-Voice reads the names, never the contents. History is off by default; when
-enabled it is AES-GCM encrypted with a device-bound Keychain key, and export
-is always explicit.
+Voice doesn't open the files. Local history is off by default. If you enable
+it, Voice encrypts it with AES-GCM and a device-bound Keychain key. Exporting
+history requires an explicit action.
 
 ## Dictation models
 
-Apple Speech is the default recognizer. Settings › Dictation adds five local
-MLX models to experiment with:
+Apple Speech is the default recognizer. You can also choose one of five local
+MLX models in Settings → Dictation:
 
 | Model | Download | Notes |
 |---|---|---|
@@ -101,18 +117,17 @@ MLX models to experiment with:
 | Cohere Transcribe 2B 8-bit | ~2.3 GiB | English decoding |
 | Parakeet TDT 0.6B v3 | ~2.3 GiB | 25 European languages |
 
-Selecting one downloads a pinned snapshot from Hugging Face into
-`~/Library/Application Support/io.blacktop.Voice/MLXModels`, then keeps that
-model warm. Microphone samples stay in memory and are never written to disk.
-Transcription runs after you release the key; Settings reports inference time,
-real-time factor, and peak memory for the last turn, plus the raw transcript
-next to the cleaned text it inserted. Switch back to Apple Speech before using
-**Remove downloaded MLX models**.
+Selecting a model downloads its pinned Hugging Face snapshot into
+`~/Library/Application Support/io.blacktop.Voice/MLXModels` and keeps it loaded.
+Microphone samples stay in memory. Transcription starts when you release the
+key. Settings shows the last turn's inference time, real-time factor, peak
+memory, raw transcript, and cleaned text. Switch back to Apple Speech before
+using **Remove downloaded MLX models**.
 
-No model here is claimed to be the fastest or most accurate. Published
-benchmark numbers come from other data, hardware, and decoders. To measure
-your own voice, record clips into `Bench/corpus/` (gitignored) as pairs like
-`refactor-note.wav` and `refactor-note.txt` with the exact words spoken, then:
+Published benchmarks use different recordings, hardware, and decoders. To
+compare these models on your own voice, put clips in the gitignored
+`Bench/corpus/` directory. Each `.wav` needs a matching `.txt` with the exact
+words spoken, such as `refactor-note.wav` and `refactor-note.txt`. Then run:
 
 ```fish
 just bench
@@ -124,9 +139,9 @@ runs one recording through every downloaded model in sequence.
 
 ## Spoken responses
 
-The system synthesizer is the default voice. Settings › Spoken responses adds
-local Qwen3-TTS voices in two tiers, fast 0.6B (~1.1 GB) and higher-quality
-1.7B (~2.4 GB), with three modes:
+Voice uses the system synthesizer by default. Settings → Spoken responses
+also has local Qwen3-TTS voices in small 0.6B (~1.1 GB) and large 1.7B
+(~2.4 GB) tiers:
 
 - **Preset voice**: built-in speakers Ryan and Aiden, with an optional style
   such as "calm and unhurried".
@@ -135,49 +150,47 @@ local Qwen3-TTS voices in two tiers, fast 0.6B (~1.1 GB) and higher-quality
 - **Clone from audio**: zero-shot cloning from a clean 3–10 second clip plus
   its exact transcript. An optional style can steer the clone's delivery.
 
-An experimental fourth engine, Breeze TTS 2 (3.5B, 4-bit, ~3.0 GB), ranks first
-among open-weight models on the Artificial Analysis speech arena. It supports
-the same three modes with one checkpoint (preset names become voice
-descriptions), returns each utterance whole rather than streaming, and its
-weights are licensed for research and non-commercial use only. `voice-say
---engine breeze` selects it from the command line.
+The experimental Breeze TTS 2 engine uses one 3.5B, 4-bit checkpoint
+(~3.0 GB). It supports the same three modes, turning preset names into voice
+descriptions. Breeze returns a complete utterance before playback starts, and
+its weights are licensed for research and non-commercial use only. See the
+[model licenses](docs/third-party.md) before using it.
 
-Generation streams, so playback starts before the response finishes
-synthesizing. Reference clips are conditioned in memory and never leave the
-Mac.
+Qwen3 can start playback while it generates the rest of a response. Voice
+processes clone reference clips in memory; they never leave the Mac.
 
 ## voice-say
 
-The same voices as a `say`-style command, for scripts and agents:
+Use Voice's local voices from scripts, read Markdown documents aloud, or speak
+short agent updates:
 
 ```fish
-just install    # builds and installs to ~/.local/bin, no sudo
 voice-say "Build finished."
-voice-say --tier large --style "calm and unhurried" "Deploy is green."
-voice-say --describe "a warm narrator with a South African accent" "Ready."
-echo "piped text" | voice-say --voice Aiden
+voice-say --file notes.md --timings
 ```
 
-With no flags it speaks in whatever voice the app is configured to use, so it
-reuses the checkpoint the app already downloaded. Each flag overrides only
-what it names. `--help` documents every option, `--list-voices` shows presets
-and download sizes, and `--generate-completion-script fish` emits completions.
+The [voice-say guide](docs/voice-say.md) covers voice selection, document
+narration, playback controls, and tuning.
 
-One `voice-say` speaks at a time. A second invocation skips and exits 0, so a
-burst of announcements from several agents collapses to one instead of queueing
-minutes of stale speech. Pass `--wait` to queue.
+## Agent notifications
 
-Install with `just install` rather than copying the binary: MLX loads its
-Metal shaders from a bundle beside the executable, so a bare copy or symlink
-cannot find them. A copy also ships inside the app at
-`Voice.app/Contents/MacOS/voice-say`.
+`voice-notify` sends native Mac notifications, with tmux click actions and
+optional phone push through ntfy:
+
+```fish
+voice-notify --title "Build · Voice" --message "All checks passed." \
+    --group voice-build --no-pane
+```
+
+See the [voice-notify guide](docs/voice-notify.md) for persistent alerts,
+notification groups, `voice-say --notify`, and phone setup.
 
 ## macOS 27 beta status
 
-On current macOS 27 betas (verified on 26A5388g), `AnalyzerInput(buffer:)`
-crashes inside Speech.framework for every buffer. Reported to Apple. Voice
-feeds SpeechAnalyzer through `AnalyzerInputConverter` on macOS 27 and keeps
-the original conversion path on macOS 26.
+`AnalyzerInput(buffer:)` traps in Speech.framework on the tested macOS 27
+builds 26A5388g and 26B5091g. The issue has been reported to Apple. Voice uses
+the asynchronous `AnalyzerInputConverter` on macOS 27 and keeps the original
+conversion path on macOS 26.
 
 ## More
 
@@ -189,6 +202,7 @@ the original conversion path on macOS 26.
 
 ## License
 
-[MIT](LICENSE). Model weights are not bundled; they download from Hugging Face
-pinned by revision, under their own terms. Most checkpoints are Apache-2.0;
-Parakeet TDT 0.6B v3 is CC-BY-4.0, which carries an attribution requirement.
+[MIT](LICENSE). Model weights download separately from pinned Hugging Face
+revisions under their own terms. Most checkpoints are Apache-2.0. Parakeet TDT
+0.6B v3 is CC-BY-4.0 and requires attribution; Breeze TTS 2 weights permit
+research and non-commercial use only. See [Third-party notices](docs/third-party.md).

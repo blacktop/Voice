@@ -18,6 +18,10 @@ final class PlaybackBufferQueue: Sendable {
         var waiters: [Waiter] = []
         var drainContinuation: CheckedContinuation<Void, Error>?
         var generation = UUID()
+        var drainedAt: ContinuousClock.Instant?
+        var idleSeconds = 0.0
+        var isPaused = false
+        var hasPlayed = false
     }
 
     private let capacity: Int
@@ -37,6 +41,10 @@ final class PlaybackBufferQueue: Sendable {
                         return .failure(CancellationError())
                     }
                     guard state.pendingCount >= capacity else {
+                        if state.pendingCount == 0, let drainedAt = state.drainedAt {
+                            state.idleSeconds += drainedAt.duration(to: .now) / .seconds(1)
+                            state.drainedAt = nil
+                        }
                         state.pendingCount += 1
                         return .success(Reservation(generation: state.generation))
                     }
@@ -75,6 +83,8 @@ final class PlaybackBufferQueue: Sendable {
             }
             state.pendingCount -= 1
             guard state.pendingCount == 0 else { return (nil, nil) }
+            state.hasPlayed = true
+            state.drainedAt = state.isPaused ? nil : .now
             let drain = state.drainContinuation
             state.drainContinuation = nil
             return (nil, drain)
@@ -86,16 +96,21 @@ final class PlaybackBufferQueue: Sendable {
     }
 
     func awaitDrain() async throws {
-        try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<Void, Error>) in
-            let resumeImmediately = state.withLock { state in
-                guard state.pendingCount > 0 || !state.waiters.isEmpty else { return true }
-                state.drainContinuation = continuation
-                return false
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, Error>) in
+                let immediate: Result<Void, Error>? = state.withLock { state in
+                    if Task.isCancelled { return .failure(CancellationError()) }
+                    guard state.pendingCount > 0 || !state.waiters.isEmpty else {
+                        return .success(())
+                    }
+                    state.drainContinuation = continuation
+                    return nil
+                }
+                if let immediate { continuation.resume(with: immediate) }
             }
-            if resumeImmediately {
-                continuation.resume()
-            }
+        } onCancel: {
+            self.cancel()
         }
     }
 
@@ -106,6 +121,10 @@ final class PlaybackBufferQueue: Sendable {
             state.drainContinuation = nil
             state.pendingCount = 0
             state.generation = UUID()
+            state.drainedAt = nil
+            state.idleSeconds = 0
+            state.isPaused = false
+            state.hasPlayed = false
             return captured
         }
         for waiter in waiters {
@@ -116,6 +135,27 @@ final class PlaybackBufferQueue: Sendable {
 
     var pendingBufferCount: Int {
         state.withLock { $0.pendingCount }
+    }
+
+    /// Time between an exhausted playback queue and the next audio reservation.
+    /// Excludes initial model startup and the final drain after speech finishes.
+    var idleSeconds: Double {
+        state.withLock { $0.idleSeconds }
+    }
+
+    /// A deliberate pause is not synthesis starvation, even when it begins
+    /// while the player is waiting for the first chunk of the next segment.
+    func setPaused(_ paused: Bool) {
+        state.withLock { state in
+            guard paused != state.isPaused else { return }
+            state.isPaused = paused
+            if paused, let drainedAt = state.drainedAt {
+                state.idleSeconds += drainedAt.duration(to: .now) / .seconds(1)
+                state.drainedAt = nil
+            } else if !paused, state.pendingCount == 0, state.hasPlayed {
+                state.drainedAt = .now
+            }
+        }
     }
 
     var waitingProducerCount: Int {

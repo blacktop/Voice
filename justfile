@@ -7,6 +7,7 @@ release_derived_data := ".build/DerivedData-Release"
 # The CLI tools are separate schemes; building them into the app's DerivedData
 # changes the build parameters enough to break the explicit-module scan.
 cli_derived_data := ".build/DerivedData-CLI"
+notify_derived_data := ".build/DerivedData-Notify"
 source_packages := ".build/SourcePackages"
 destination := "platform=macOS,arch=arm64e"
 
@@ -53,6 +54,19 @@ release: generate
 
 release-signed: generate
     ./scripts/xcbuild.sh -quiet -project {{project}} -scheme {{scheme}} -configuration Release -destination '{{destination}}' -derivedDataPath {{release_derived_data}} -clonedSourcePackagesDirPath {{source_packages}} -onlyUsePackageVersionsFromResolvedFile ARCHS=arm64e ONLY_ACTIVE_ARCH=YES build
+
+# Install the signed app and both CLIs. The prefix applies to the CLI wrappers.
+install prefix="~/.local/bin":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Keep the app build and relaunch in the invoking user's GUI session.
+    if [[ ${EUID} -eq 0 && -n ${SUDO_USER:-} ]]; then
+        sudo -u "$SUDO_USER" just install-app
+    else
+        just install-app
+    fi
+    just install-cli {{quote(prefix)}}
+    just install-notify {{quote(prefix)}}
 
 # Build the signed Release app, install it into /Applications, and relaunch.
 install-app: release-signed
@@ -145,6 +159,7 @@ _verify-security-path app:
     audit_executable "${app}" "${app}/Contents/MacOS/{{scheme}}"
     require_entitlement com.apple.security.device.audio-input true
     audit_executable "${app}/Contents/MacOS/voice-say" "${app}/Contents/MacOS/voice-say"
+    audit_executable "${app}/Contents/MacOS/voice-notify" "${app}/Contents/MacOS/voice-notify"
 
     printf 'Verified Hardened Runtime, arm64e, Enhanced Security v2, and hard-mode MIE entitlements.\n'
 
@@ -169,8 +184,49 @@ say-cli: generate
     ./scripts/xcbuild.sh -quiet -project {{project}} -scheme VoiceSay -configuration Release -destination '{{destination}}' -derivedDataPath {{cli_derived_data}} -clonedSourcePackagesDirPath {{source_packages}} -onlyUsePackageVersionsFromResolvedFile ARCHS=arm64e ONLY_ACTIVE_ARCH=YES build
     @echo "{{cli_derived_data}}/Build/Products/Release/voice-say"
 
+notify-cli: generate
+    ./scripts/xcbuild.sh -quiet -project {{project}} -scheme VoiceNotify -configuration Release -destination '{{destination}}' -derivedDataPath {{notify_derived_data}} -clonedSourcePackagesDirPath {{source_packages}} -onlyUsePackageVersionsFromResolvedFile ARCHS=arm64e ONLY_ACTIVE_ARCH=YES build
+    @echo "{{notify_derived_data}}/Build/Products/Release/voice-notify"
+
+# Keep the executable's signed payload separate from the PATH wrapper, as for
+# voice-say. The tool itself has no MLX resource bundles.
+install-notify prefix="~/.local/bin":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ ${EUID} -eq 0 && -n ${SUDO_USER:-} ]]; then
+        sudo -u "$SUDO_USER" just notify-cli
+    else
+        just notify-cli
+    fi
+    just _install-notify-products "{{notify_derived_data}}/Build/Products/Release" {{quote(prefix)}}
+
+[private]
+_install-notify-products products prefix:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ ${EUID} -eq 0 && -n ${SUDO_USER:-} ]]; then
+        home_dir="$(eval echo "~$SUDO_USER")"
+    else
+        home_dir="$HOME"
+    fi
+    products={{quote(products)}}
+    prefix_raw={{quote(prefix)}}
+    bindir="${prefix_raw/#\~/$home_dir}"
+    mkdir -p "$bindir"
+    bindir="$(cd "$bindir" && pwd -P)"
+    libexec="$(dirname "$bindir")/libexec/voice-notify"
+    mkdir -p "$libexec"
+    install -m 755 "$products/voice-notify" "$libexec/voice-notify"
+    # Quote the resolved executable for /bin/sh, including spaces and apostrophes.
+    apostrophe="'\"'\"'"
+    quoted="${libexec//\'/$apostrophe}"
+    printf '#!/bin/sh\nexec '\''%s/voice-notify'\'' "$@"\n' "$quoted" > "$bindir/voice-notify"
+    chmod 755 "$bindir/voice-notify"
+    codesign --verify "$libexec/voice-notify"
+    echo "installed $bindir/voice-notify -> $libexec/voice-notify"
+
 # Install voice-say onto PATH. Defaults to ~/.local/bin, which needs no sudo;
-# pass another directory to override, e.g. `just install /usr/local/bin`.
+# pass another directory to override, e.g. `just install-cli /usr/local/bin`.
 #
 # MLX loads its Metal shaders from a resource bundle resolved next to the
 # running executable, so the binary cannot be copied on its own. The payload
@@ -182,7 +238,7 @@ say-cli: generate
 # needs sudo: running the build as root would leave root-owned artifacts in
 # Voice.xcodeproj and .build, breaking the next ordinary build. The build is
 # instead run as the invoking user below.
-install prefix="~/.local/bin":
+install-cli prefix="~/.local/bin":
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ ${EUID} -eq 0 && -n ${SUDO_USER:-} ]]; then
@@ -190,7 +246,13 @@ install prefix="~/.local/bin":
     else
         just say-cli
     fi
-    products="{{cli_derived_data}}/Build/Products/Release"
+    just _install-cli-products "{{cli_derived_data}}/Build/Products/Release" {{quote(prefix)}}
+
+[private]
+_install-cli-products products prefix:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    products={{quote(products)}}
     # Under sudo HOME is root's, so expand ~ against the invoking user instead
     # of installing into /var/root.
     if [[ ${EUID} -eq 0 && -n ${SUDO_USER:-} ]]; then
@@ -198,7 +260,7 @@ install prefix="~/.local/bin":
     else
         home_dir="$HOME"
     fi
-    prefix_raw="{{prefix}}"
+    prefix_raw={{quote(prefix)}}
     bindir="${prefix_raw/#\~/$home_dir}"
     libexec="$(dirname "$bindir")/libexec/voice-say"
 
@@ -209,16 +271,20 @@ install prefix="~/.local/bin":
     for dir in "$bindir" "$libexec"; do
         if ! mkdir -p "$dir" 2>/dev/null || [[ ! -w "$dir" ]]; then
             echo "error: $dir is not writable." >&2
-            echo "Re-run with sudo, or install somewhere you own: just install ~/.local/bin" >&2
+            echo "Re-run with sudo, or install somewhere you own: just install-cli ~/.local/bin" >&2
             exit 1
         fi
     done
+    bindir="$(cd "$bindir" && pwd -P)"
+    libexec="$(cd "$libexec" && pwd -P)"
 
     install -m 755 "$products/voice-say" "$libexec/voice-say"
     rsync -a --delete-excluded --include='*/' --include='*' \
         "$products"/*.bundle "$libexec/" 2>/dev/null \
         || cp -R "$products"/*.bundle "$libexec/"
-    printf '#!/bin/sh\nexec "%s/voice-say" "$@"\n' "$libexec" > "$bindir/voice-say"
+    apostrophe="'\"'\"'"
+    quoted="${libexec//\'/$apostrophe}"
+    printf '#!/bin/sh\nexec '\''%s/voice-say'\'' "$@"\n' "$quoted" > "$bindir/voice-say"
     chmod 755 "$bindir/voice-say"
 
     codesign --verify "$libexec/voice-say" 2>/dev/null \
