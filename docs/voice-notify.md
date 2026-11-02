@@ -34,6 +34,43 @@ For persistent alerts, open **System Settings → Notifications → Voice → Al
 Style → Persistent**. The first notification request asks for permission.
 Sending the same `--group` again replaces that group's notification.
 
+Choose **Details…** from a notification's actions to open its complete text in
+a resizable Voice window. Large messages have page controls; Copy and Speak
+still use the complete text. macOS may place the action in the notification's
+options menu. **Speak** runs macOS `say` without overriding your Read & Speak
+voice or rate. The playback menu also offers **Speak with Selected Voice**,
+which uses the engine chosen in Voice's Speech settings, and **Speak with Apple
+Speech**, which uses Voice's system-voice selection through AVSpeechSynthesizer.
+Replay feeds long messages to the chosen engine in short sections, so playback
+can begin before the whole message is processed. Reading a very large message
+can still take hours; Stop cancels the current section and the remaining text.
+Neural voices may need time to generate audio; the window shows **Preparing
+audio…** until playback starts. **Stop** or closing the window cancels playback.
+If another `voice-say` is speaking, wait for it to finish and press Speak again.
+When the notification has a destination, **Open in Zed** or **Go to Terminal**
+follows the same target as clicking the notification itself. The window remains
+available for reading or replaying the message.
+
+The full text stays in the local notification metadata for as long as macOS
+retains that notification. To keep a short banner and supply a separate full
+message, pipe UTF-8 text to `voice-notify --details-stdin`:
+
+```fish
+cat report.txt | voice-notify --title "Build · Voice" --message "Report ready." \
+    --group voice-report --no-pane --details-stdin
+```
+
+The input must finish within 60 seconds and fit in 8 MiB. Empty, malformed, or
+oversized input fails without posting. Without this flag, Details shows the
+normal message. Install the updated app and CLI together with `just install`;
+an older app rejects requests carrying separate Details text.
+
+`voice-say --notify` includes the complete text
+prepared for speech, even when `--notify-message` overrides its short preview.
+Details are limited to 8 MiB. If prepared speech exceeds that limit, speech
+continues and the notification keeps only its short preview. Phone push
+continues to contain only the normal notification body.
+
 `--pane %3` records a tmux pane for the click action. The default comes from
 `TMUX_PANE`; use `--no-pane` to omit the tmux target or `--tmux-socket PATH` to
 choose a server. On a click, Voice finds the pane's current session and the

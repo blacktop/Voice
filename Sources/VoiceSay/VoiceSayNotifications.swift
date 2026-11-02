@@ -41,17 +41,20 @@ struct VoiceSayNotificationOptions: ParsableArguments {
         }
     }
 
-    func message(previewParts: some Sequence<String>, environment: [String: String]) throws
+    func message(previewParts: some Collection<String>, environment: [String: String]) throws
         -> NotificationMessage?
     {
         guard notify else { return nil }
         let context = try NotificationContext(
             pane: notifyPane, noPane: notifyNoPane, tmuxSocket: notifyTmuxSocket,
             zedProject: notifyZedProject, push: notifyPush, environment: environment)
+        let preview = notifyMessage ?? NotificationMessage.preview(parts: previewParts)
+        let details = try NotificationDetails.encodeIfFits(parts: previewParts)
         return try context.message(
             title: notifyTitle ?? "Voice", subtitle: notifySubtitle,
-            message: notifyMessage ?? NotificationMessage.preview(parts: previewParts),
-            group: notifyGroup ?? "voice-say:\(context.pane ?? "global")")
+            message: preview,
+            group: notifyGroup ?? "voice-say:\(context.pane ?? "global")",
+            details: details)
     }
 }
 

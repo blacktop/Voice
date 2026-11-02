@@ -5,7 +5,19 @@ import VoiceNotifications
 struct VoiceApplication: App {
     @NSApplicationDelegateAdaptor(VoiceNotificationAppDelegate.self)
     private var notificationDelegate
-    @State private var model = VoiceAppModel()
+    @State private var model: VoiceAppModel
+    private let notificationDetailsWindow: NotificationDetailsWindowController
+
+    init() {
+        let model = VoiceAppModel()
+        _model = State(initialValue: model)
+        let window = NotificationDetailsWindowController { [model] text, voice, started in
+            try await model.speakNotification(
+                text, voice: voice, onPlaybackStarted: started)
+        }
+        notificationDetailsWindow = window
+        notificationDelegate.setDetailsHandler { [window] details in window.show(details) }
+    }
 
     var body: some Scene {
         MenuBarExtra {

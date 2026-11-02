@@ -25,7 +25,43 @@ final class VoiceSayNotificationTests: XCTestCase {
                 previewParts: [String(repeating: "x", count: 5000)], environment: [:]))
         XCTAssertEqual(message.title, "Build")
         XCTAssertEqual(message.message.utf8.count, 1024)
+        XCTAssertEqual(message.details, Data(String(repeating: "x", count: 5000).utf8))
         XCTAssertNil(message.pane)
+    }
+
+    func testPreviewOverrideKeepsCompleteSpeechForDetails() throws {
+        let command = try VoiceSay.parse([
+            "--notify", "--notify-no-pane", "--notify-message", "Summary", "hello",
+        ])
+        let message = try XCTUnwrap(
+            command.notification.message(previewParts: ["First", "Last"], environment: [:]))
+        XCTAssertEqual(message.message, "Summary")
+        XCTAssertEqual(message.details, Data("First\n\nLast".utf8))
+    }
+
+    func testOversizedDetailsStillPostPreviewAndSpeak() async throws {
+        let command = try VoiceSay.parse(["--notify", "--notify-no-pane", "hello"])
+        let message = try XCTUnwrap(
+            command.notification.message(
+                previewParts: [
+                    String(repeating: "a", count: NotificationDetails.maximumTextBytes), "last",
+                ], environment: [:]))
+        XCTAssertNil(message.details)
+        XCTAssertEqual(message.message.utf8.count, 1024)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let posted = expectation(description: "preview posted")
+        let spoken = expectation(description: "speech completed")
+        try await VoiceSayNotificationFlow.run(
+            message: message, at: url, whenBusy: .skip,
+            report: { _ in XCTFail("reported preview-only notification") },
+            post: { received in
+                XCTAssertEqual(received, message)
+                posted.fulfill()
+                return NotificationRPCResponse()
+            },
+            speak: { spoken.fulfill() })
+        await fulfillment(of: [posted, spoken], timeout: 2)
     }
 
     func testInvalidInheritedTmuxContextIsAUsageError() throws {

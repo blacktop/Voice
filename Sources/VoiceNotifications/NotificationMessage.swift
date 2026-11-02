@@ -32,13 +32,16 @@ public struct NotificationContext: Sendable {
                 token: environment["VOICE_NOTIFY_NTFY_TOKEN"]) : nil
     }
 
-    public func message(title: String, subtitle: String?, message: String, group: String) throws
+    public func message(
+        title: String, subtitle: String?, message: String, group: String, details: Data? = nil
+    ) throws
         -> NotificationMessage
     {
+        let details = details == Data(message.utf8) ? nil : details
         let result = NotificationMessage(
             title: title, subtitle: subtitle, message: message, group: group,
             pane: pane, tmuxSocket: tmuxSocket, zedProject: zedProject,
-            push: push, pushOverrides: pushOverrides)
+            push: push, pushOverrides: pushOverrides, details: details)
         try result.validate()
         return result
     }
@@ -54,12 +57,13 @@ public struct NotificationMessage: Codable, Sendable, Equatable {
     public var zedProject: String?
     public var push: Bool
     public var pushOverrides: NtfyOverrides?
+    public var details: Data?
 
     public init(
         title: String, subtitle: String? = nil, message: String, group: String,
         pane: String? = nil, tmuxSocket: String? = nil, zedProject: String? = nil,
         push: Bool = false,
-        pushOverrides: NtfyOverrides? = nil
+        pushOverrides: NtfyOverrides? = nil, details: Data? = nil
     ) {
         self.title = title
         self.subtitle = subtitle
@@ -70,6 +74,7 @@ public struct NotificationMessage: Codable, Sendable, Equatable {
         self.zedProject = zedProject
         self.push = push
         self.pushOverrides = pushOverrides
+        self.details = details
     }
 
     public func validate() throws {
@@ -87,6 +92,7 @@ public struct NotificationMessage: Codable, Sendable, Equatable {
             }
         }
         if let zedProject { try ZedProjectTarget.validatePath(zedProject) }
+        if let details { _ = try NotificationDetails.text(from: details) }
     }
 
     public var identifier: String {
@@ -137,6 +143,9 @@ public enum NotificationRPCRequest: Codable, Sendable {
     // Older Voice versions reject this discriminator instead of silently
     // accepting a post while discarding its unknown project field.
     case postWithProject(NotificationMessage)
+    // A prior app must reject full-text posts rather than silently discarding
+    // the text needed by the Details action.
+    case postWithDetails(NotificationMessage)
     case configurePush(NtfyConfiguration)
 }
 

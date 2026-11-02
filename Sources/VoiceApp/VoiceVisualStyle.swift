@@ -8,6 +8,20 @@ enum VoiceVisualStyle {
     static let sectionSpacing: CGFloat = 18
 }
 
+struct VoiceAppIcon: View {
+    let size: CGFloat
+    private static let image = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
+
+    var body: some View {
+        Image(nsImage: Self.image)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+}
+
 struct VoiceAmbientBackground: View {
     let accent: Color
 

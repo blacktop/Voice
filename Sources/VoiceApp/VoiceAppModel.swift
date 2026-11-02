@@ -4,6 +4,7 @@ import Observation
 import UniformTypeIdentifiers
 import VoiceCore
 import VoiceMLX
+import VoiceNotifications
 import VoicePlatform
 
 @MainActor
@@ -1052,6 +1053,37 @@ final class VoiceAppModel {
     func stopSpeaking() {
         Task { @concurrent [session] in
             await session.stopSpeaking()
+        }
+    }
+
+    func speakNotification(
+        _ text: String, voice: NotificationReplayVoice,
+        onPlaybackStarted: @escaping @Sendable () -> Void
+    ) async throws {
+        guard voice != .selected || !isSpeechModelPreparing else {
+            throw VoiceNotificationError("The selected voice is still being prepared.")
+        }
+        let didSpeak = try await SpeechLock.withLock(whenBusy: .skip) {
+            try Task.checkCancellation()
+            await session.stopSpeaking()
+            try Task.checkCancellation()
+            switch voice {
+            case .system:
+                try await NotificationSystemSpeech.speak(text, onStarted: onPlaybackStarted)
+            case .appleSpeech, .selected:
+                let output: any SpeechOutputting =
+                    voice == .appleSpeech ? systemSpeechOutput : speechRouter
+                let identifier = selectedVoiceIdentifier
+                try await NotificationSpeechReplay.speak(text, onStarted: onPlaybackStarted) {
+                    chunk, started in
+                    try await output.speak(
+                        chunk, voiceIdentifier: identifier, onPlaybackStarted: started)
+                }
+            }
+        }
+        guard didSpeak else {
+            throw VoiceNotificationError(
+                "Another voice-say is speaking. Try again when it finishes.")
         }
     }
 

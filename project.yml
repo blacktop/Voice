@@ -202,6 +202,7 @@ targets:
     platform: macOS
     sources:
       - Tests/VoiceNotificationsTests
+      - path: Sources/VoiceApp/NotificationTextView.swift
     dependencies:
       - target: VoiceNotifications
     settings:
@@ -213,6 +214,7 @@ targets:
     sources:
       - Tests/VoiceNotifyTests
       - path: Sources/VoiceNotify/VoiceNotify.swift
+      - path: Sources/VoiceNotify/NotificationDetailsInput.swift
     dependencies:
       - target: VoiceNotifications
       - package: swift-argument-parser

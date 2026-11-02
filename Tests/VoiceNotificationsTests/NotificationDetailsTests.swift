@@ -32,6 +32,86 @@ final class NotificationDetailsTests: XCTestCase {
             ]))
     }
 
+    func testRedundantDetailsUseCompatibleRPC() throws {
+        let context = try NotificationContext(
+            pane: nil, noPane: true, tmuxSocket: nil, push: false, environment: [:])
+        let message = try context.message(
+            title: "Build", subtitle: nil, message: "Passed", group: "build",
+            details: Data("Passed".utf8))
+        XCTAssertNil(message.details)
+        let (request, failure) = try NotificationClient.prepare(.post(message))
+        XCTAssertNil(failure)
+        guard case .post(let prepared) = request else {
+            return XCTFail("ordinary posts must remain compatible with older Voice apps")
+        }
+        XCTAssertEqual(prepared, message)
+    }
+
+    func testFullTextRPCIsVersionedAndFitsItsFrame() throws {
+        // These valid UTF-8 bytes produce '/' in base64. Escaping those slashes
+        // would exceed a bound calculated from base64's ordinary 4/3 overhead.
+        let text = String(repeating: "\u{FFFF}", count: NotificationDetails.maximumTextBytes / 3)
+        let message = NotificationMessage(
+            title: "Build", message: "Preview", group: "build", zedProject: "/tmp/project",
+            details: try NotificationDetails.encode(parts: [text]))
+        let (request, failure) = try NotificationClient.prepare(.post(message))
+        XCTAssertNil(failure)
+        guard case .postWithDetails(let prepared) = request else {
+            return XCTFail("an old app could silently discard the details")
+        }
+        XCTAssertEqual(prepared, message)
+        let body = try NotificationSocket.encoded(request)
+        XCTAssertLessThanOrEqual(body.count, NotificationSocket.maximumFrame)
+        guard
+            case .postWithDetails(let decoded) = try JSONDecoder().decode(
+                NotificationRPCRequest.self, from: body)
+        else { return XCTFail("wrong RPC discriminator") }
+        XCTAssertEqual(decoded.details, message.details)
+    }
+
+    @MainActor
+    func testActionAndLocalMetadataPreserveTheDefaultTarget() throws {
+        let target = NotificationClickTarget(
+            zedProject: ZedProjectTarget(path: "/tmp/project"))
+        let full = try NotificationDetails.encode(parts: [String(repeating: "full ", count: 2000)])
+        let message = NotificationMessage(
+            title: "Build", subtitle: "Project", message: "Short preview", group: "build",
+            details: full)
+        let category = VoiceNotificationAppDelegate.messageCategory()
+        XCTAssertEqual(category.identifier, NotificationDetails.categoryIdentifier)
+        XCTAssertEqual(category.actions.map(\.identifier), [NotificationDetails.actionIdentifier])
+        XCTAssertTrue(try XCTUnwrap(category.actions.first).options.contains(.foreground))
+        let content = try VoiceNotificationAppDelegate.content(for: message, target: target)
+        XCTAssertEqual(content.categoryIdentifier, category.identifier)
+        XCTAssertEqual(content.body, "Short preview")
+        XCTAssertEqual(content.userInfo[NotificationDetails.userInfoKey] as? Data, full)
+        XCTAssertEqual(NotificationClickTarget.decode(content.userInfo), target)
+        let details = try VoiceNotificationAppDelegate.details(for: content)
+        XCTAssertEqual(details.title, message.title)
+        XCTAssertEqual(details.subtitle, message.subtitle)
+        XCTAssertEqual(details.text, try NotificationDetails.text(from: full))
+        XCTAssertEqual(details.clickTarget, target)
+        XCTAssertEqual(details.destination, .zed)
+        let legacy = NotificationMessage(title: "Old", message: "Complete body", group: "old")
+        let legacyContent = try VoiceNotificationAppDelegate.content(for: legacy, target: target)
+        XCTAssertEqual(
+            legacyContent.userInfo[NotificationDetails.userInfoKey] as? Data,
+            Data("Complete body".utf8))
+    }
+
+    func testDetailsNeverEnterPhonePayload() throws {
+        let message = NotificationMessage(
+            title: "Build", message: "Preview", group: "build", push: true,
+            details: try NotificationDetails.encode(parts: ["Private complete text"]))
+        let configuration = NtfyConfiguration(
+            server: "https://example.test", topic: "private", token: "test-token")
+        let request = try NtfyPush.request(for: message, configuration: configuration)
+        let payload = try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody))
+        XCTAssertEqual(
+            payload as? [String: String],
+            ["topic": "private", "title": "Build", "message": "Preview"])
+    }
+
     @MainActor
     func testReplacingAndClosingDetailsCancelReplayInOrder() async throws {
         let firstStarted = expectation(description: "first replay started")

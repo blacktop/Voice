@@ -201,7 +201,8 @@ voice-notify --title "Build · Voice" --message "All checks passed." \
 ```
 
 See the [voice-notify guide](docs/voice-notify.md) for persistent alerts,
-project targeting limits, notification groups, `voice-say --notify`, and phone setup.
+full-text Details and replay, project targeting limits, notification groups,
+`voice-say --notify`, and phone setup.
 
 ## macOS 27 beta status
 

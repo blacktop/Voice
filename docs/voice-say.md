@@ -124,6 +124,13 @@ voice-say --notify --notify-title "Build · Voice" \
     --notify-group voice-build "All checks passed."
 ```
 
+The banner has a short preview. Its **Details…** action opens the complete
+text prepared for speech, with a **Speak** button that starts quickly using the
+macOS voice. Choose **Speak with Selected Voice** from its playback menu to use
+Voice's configured engine. This also works when `--notify-message` supplies a
+custom preview. If the prepared text exceeds the 8 MiB Details limit, speech
+continues and the notification keeps only its short preview.
+
 Use `--notify-zed-project /absolute/project/path` to attach a Zed project.
 The [notification guide](voice-notify.md#zed-projects) explains window-selection
 limits, metadata overrides, speech-lock behavior, and optional phone push.

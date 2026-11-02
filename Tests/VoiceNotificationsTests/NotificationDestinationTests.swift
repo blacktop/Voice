@@ -8,6 +8,47 @@ final class NotificationDestinationTests: XCTestCase {
         pane: "%3", socket: "/tmp/test-tmux",
         server: TmuxProcessIdentity(pid: 42, startSeconds: 100, startMicroseconds: 1))
 
+    func testDetailsDecodeBothClickFormatsWithoutLosingTheTarget() throws {
+        let project = ZedProjectTarget(path: "/tmp/project")
+        let combined = NotificationClickTarget(tmux: tmux, zedProject: project)
+        let content = UNMutableNotificationContent()
+        content.userInfo = [
+            NotificationDetails.userInfoKey: Data("Full text".utf8),
+            "voice-click": try JSONEncoder().encode(combined),
+        ]
+        var details = try VoiceNotificationAppDelegate.details(for: content)
+        XCTAssertEqual(details.clickTarget, combined)
+        XCTAssertEqual(details.destination, .zed)
+
+        content.userInfo = [
+            NotificationDetails.userInfoKey: Data("Full text".utf8),
+            "voice-tmux": try JSONEncoder().encode(tmux),
+        ]
+        details = try VoiceNotificationAppDelegate.details(for: content)
+        XCTAssertEqual(details.clickTarget, NotificationClickTarget(tmux: tmux))
+        XCTAssertEqual(details.destination, .terminal)
+    }
+
+    @MainActor
+    func testAbsentAndUnreadableTargetsOfferNoAction() throws {
+        let content = UNMutableNotificationContent()
+        for target in [Data("invalid".utf8), Data(repeating: 0, count: 8193), Data("{}".utf8)] {
+            content.userInfo = [
+                NotificationDetails.userInfoKey: Data("Full text".utf8),
+                "voice-click": target,
+            ]
+            let details = try VoiceNotificationAppDelegate.details(for: content)
+            XCTAssertNil(details.destination)
+            let presentation = NotificationDetailsPresentation(
+                openDestination: { _ in XCTFail("opened an absent target") },
+                speak: { _, _, _ in })
+            presentation.show(details)
+            presentation.goToDestination()
+            XCTAssertFalse(presentation.isOpeningDestination)
+        }
+        XCTAssertNil(NotificationDetails(title: "Title", subtitle: "", text: "Text").destination)
+    }
+
     @MainActor
     func testDestinationFailureIsVisibleAndCanBeRetried() async {
         let target = NotificationClickTarget(tmux: tmux)

@@ -30,6 +30,7 @@ final class VoiceNotifyTests: XCTestCase {
     func testPaneAndServerDefaultsAreExplicitAndDeterministic() throws {
         let environment = ["TMUX_PANE": "%8", "TMUX": "/tmp/server,123,0"]
         let command = try PostNotification.parse(required)
+        XCTAssertNil(try command.makeMessage(environment: environment).details)
         XCTAssertEqual(try command.makeMessage(environment: environment).pane, "%8")
         XCTAssertEqual(try command.makeMessage(environment: environment).tmuxSocket, "/tmp/server")
         let disabled = try PostNotification.parse(required + ["--no-pane"])
@@ -86,4 +87,5 @@ final class VoiceNotifyTests: XCTestCase {
             XCTAssertEqual(VoiceNotify.exitCode(for: error).rawValue, 0)
         }
     }
+
 }

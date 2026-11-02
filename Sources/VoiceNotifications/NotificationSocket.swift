@@ -18,8 +18,9 @@ enum BlockingCall {
 }
 
 enum NotificationSocket {
-    // Includes the worst-case JSON escaping of every validated text field.
-    static let maximumFrame = 131_072
+    // Full text is Data (base64 in JSON); the remaining validated fields fit
+    // within the original 128 KiB bound even with worst-case JSON escaping.
+    static let maximumFrame = ((NotificationDetails.maximumTextBytes + 2) / 3) * 4 + 131_072
     static let directoryName = "io.blacktop.Voice.notify"
 
     static func path() throws -> String {
@@ -176,10 +177,7 @@ enum NotificationSocket {
     static func send<T: Encodable>(
         _ value: T, to descriptor: Int32, until deadline: ContinuousClock.Instant
     ) throws {
-        let body = try JSONEncoder().encode(value)
-        guard !body.isEmpty, body.count <= maximumFrame else {
-            throw VoiceNotificationError("notification request is too large")
-        }
+        let body = try encoded(value)
         var length = UInt32(body.count).bigEndian
         var framed = withUnsafeBytes(of: &length) { Data($0) }
         framed.append(body)
@@ -196,6 +194,16 @@ enum NotificationSocket {
                 }
             }
         }
+    }
+
+    static func encoded<T: Encodable>(_ value: T) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .withoutEscapingSlashes
+        let body = try encoder.encode(value)
+        guard !body.isEmpty, body.count <= maximumFrame else {
+            throw VoiceNotificationError("notification request is too large")
+        }
+        return body
     }
 
     static func sameUser(_ descriptor: Int32) -> Bool {
@@ -326,7 +334,7 @@ public enum NotificationClient {
         -> (NotificationRPCRequest, String?)
     {
         switch request {
-        case .post(var message), .postWithProject(var message):
+        case .post(var message), .postWithProject(var message), .postWithDetails(var message):
             try message.validate()
             guard message.push else {
                 message.pushOverrides = nil
@@ -347,7 +355,8 @@ public enum NotificationClient {
     }
 
     private static func postRequest(_ message: NotificationMessage) -> NotificationRPCRequest {
-        message.zedProject == nil ? .post(message) : .postWithProject(message)
+        if message.details != nil { return .postWithDetails(message) }
+        return message.zedProject == nil ? .post(message) : .postWithProject(message)
     }
 
     @MainActor

@@ -17,8 +17,8 @@ import Foundation
 /// it is an in-process primitive.
 ///
 /// The lock is advisory, so it excludes only participants that take it. Today
-/// that is `voice-say`; the app still downloads and speaks without it, so an
-/// app-and-CLI race remains possible until it adopts this type.
+/// that is `voice-say` and notification replay. The app's planning speech and
+/// model preparation still run without it, so those can race with a CLI.
 public enum SpeechLock {
     /// What to do when another process already holds the lock. The choice
     /// belongs to the caller: it depends on whether the utterance matters more

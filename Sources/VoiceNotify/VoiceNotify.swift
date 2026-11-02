@@ -21,6 +21,8 @@ struct PostNotification: AsyncParsableCommand {
     @Option(help: "Notification title.") var title: String
     @Option(help: "Optional line beneath the title.") var subtitle: String?
     @Option(help: "Notification body.") var message: String
+    @Flag(help: "Read the complete local Details text from UTF-8 stdin (maximum 8 MiB).")
+    var detailsStdin = false
     @Option(help: "Stable replacement group.") var group: String
     @Option(help: "tmux pane ID; defaults to TMUX_PANE.") var pane: String?
     @Flag(help: "Do not attach a tmux click target.") var noPane = false
@@ -36,15 +38,24 @@ struct PostNotification: AsyncParsableCommand {
         }
     }
 
-    func makeMessage(environment: [String: String]) throws -> NotificationMessage {
+    func makeMessage(environment: [String: String], details: Data? = nil) throws
+        -> NotificationMessage
+    {
         try NotificationContext(
-            pane: pane, noPane: noPane, tmuxSocket: tmuxSocket, zedProject: zedProject, push: push,
+            pane: pane, noPane: noPane, tmuxSocket: tmuxSocket, zedProject: zedProject,
+            push: push,
             environment: environment
-        ).message(title: title, subtitle: subtitle, message: message, group: group)
+        ).message(
+            title: title, subtitle: subtitle, message: message, group: group, details: details)
     }
 
     func run() async throws {
-        let message = try makeMessage(environment: ProcessInfo.processInfo.environment)
+        let details = detailsStdin ? try await NotificationDetailsInput.read() : nil
+        let message: NotificationMessage
+        do {
+            message = try makeMessage(
+                environment: ProcessInfo.processInfo.environment, details: details)
+        } catch { throw ValidationError(error.localizedDescription) }
         try await NotificationClient.send(.post(message)).check()
     }
 }
