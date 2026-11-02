@@ -4,6 +4,48 @@ import XCTest
 @testable import VoicePlatform
 
 final class TextInsertionCompatibilityPolicyTests: XCTestCase {
+    @MainActor
+    func testExistingHostsKeepTheirUnicodeRoute() {
+        let injector = AccessibilityTargetInjector(allowUnicodeEventFallback: true)
+        for identifier in ["com.cmuxterm.app", "com.mitchellh.ghostty", "dev.zed.Zed"] {
+            XCTAssertEqual(
+                injector.compatibilityMethod(bundleIdentifier: identifier), .unicodeEvents)
+        }
+        injector.setCompatibilityInsertionEnabled(false)
+        XCTAssertEqual(
+            injector.compatibilityMethod(bundleIdentifier: "dev.zed.Zed"), .unavailable)
+    }
+
+    @MainActor
+    func testUnicodeOnlyAPIDoesNotAuthorizeClipboard() {
+        let injector = AccessibilityTargetInjector(allowUnicodeEventFallback: true)
+        let explicit = AccessibilityTargetInjector(
+            allowUnicodeEventFallback: true, allowClipboardFallback: true)
+        for identifier in ["com.superlogical.rex", "com.openai.codex", "com.openai.chat"] {
+            injector.setUnicodeEventFallbackEnabled(true)
+            XCTAssertEqual(injector.compatibilityMethod(bundleIdentifier: identifier), .unavailable)
+            injector.setCompatibilityInsertionEnabled(true)
+            XCTAssertEqual(injector.compatibilityMethod(bundleIdentifier: identifier), .clipboard)
+            injector.setCompatibilityInsertionEnabled(false)
+            XCTAssertEqual(injector.compatibilityMethod(bundleIdentifier: identifier), .unavailable)
+            XCTAssertEqual(explicit.compatibilityMethod(bundleIdentifier: identifier), .clipboard)
+        }
+    }
+
+    @MainActor
+    func testBrowsersPreserveUnicodeOnlyOptIn() {
+        let injector = AccessibilityTargetInjector(allowUnicodeEventFallback: true)
+        for identifier in ["com.apple.Safari", "com.brave.Browser"] {
+            injector.setUnicodeEventFallbackEnabled(true)
+            XCTAssertEqual(
+                injector.compatibilityMethod(bundleIdentifier: identifier), .unicodeEvents)
+            injector.setCompatibilityInsertionEnabled(true)
+            XCTAssertEqual(injector.compatibilityMethod(bundleIdentifier: identifier), .clipboard)
+            injector.setCompatibilityInsertionEnabled(false)
+            XCTAssertEqual(injector.compatibilityMethod(bundleIdentifier: identifier), .unavailable)
+        }
+    }
+
     func testNamedTerminalHostsAutomaticallyAllowUnicodeFallback() {
         let bundleIdentifiers = [
             "com.cmuxterm.app",

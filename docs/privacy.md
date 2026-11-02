@@ -25,13 +25,23 @@
 
 Direct Accessibility insertion is the default and remains bound to the exact
 captured element. When direct insertion is unsupported, Voice falls back to
-PID-targeted Unicode events: automatically for cmux and Ghostty, and for every
-other app through the compatibility setting, which is **on by default** and can
-be turned off in Settings to require direct insertion everywhere. Apps that
-accept direct insertion never reach the fallback. Voice checks that the
-captured element is still focused before every grapheme event and aborts without
-refocusing if it changed. Focus can still change within the target process in
-the small interval between validation and event delivery.
+PID-targeted Unicode events: automatically for cmux and Ghostty, and for other
+apps through the compatibility setting, which is **on by default**. Rex,
+ChatGPT, Safari, and Brave instead use a temporary clipboard paste when that
+setting is enabled, because they may interpret Unicode events as physical keys.
+Safari invokes its native Paste menu command through Accessibility; it does not
+use a global keyboard event or change Lockdown Mode. The temporary text is
+marked local-only, transient, and concealed. Other local clipboard readers
+may still see it. Voice preserves up to 64 MiB of existing clipboard data and
+restores it only if no other process has changed the clipboard. macOS may ask
+for permission to read the previous clipboard. Apps that accept direct insertion
+never reach either fallback. Fields identified by Accessibility as secure text
+fields cannot use the clipboard route. Voice verifies the captured focus before
+each grapheme event or paste and aborts without refocusing if it changed. Focus can
+still change within the target process in the small interval between validation
+and event delivery. Clipboard ownership is checked again after focus verification,
+but these checks do not make shared-clipboard delivery atomic. Compatibility
+text cannot submit a terminal command by including a line break.
 
 Voice does not inspect shell startup files or unrelated credentials. The
 notification CLIs read only their explicit `VOICE_NOTIFY_NTFY_*` overrides and

@@ -41,11 +41,12 @@ public struct VoicePreferences: @unchecked Sendable {
         self.defaults = defaults
     }
 
-    /// Whether PID-targeted Unicode insertion may be used when direct
+    /// Whether compatibility insertion may be used when direct
     /// Accessibility insertion is rejected. Defaults to on: it is a strict
     /// fallback that only runs where the alternative is a failed insertion,
-    /// and the editors this is needed for (Zed terminals and similar) are
-    /// common targets.
+    /// and the editors this is needed for are common targets. Rex, ChatGPT,
+    /// Safari, and Brave use a temporary local clipboard paste; other apps use
+    /// Unicode events.
     public var compatibilityInsertionEnabled: Bool {
         defaults.object(forKey: Key.compatibilityInsertionEnabled) as? Bool ?? true
     }

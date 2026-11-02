@@ -10,6 +10,7 @@ public enum TargetInjectionError: LocalizedError, Sendable {
     case targetChanged
     case targetChangedDuringInsertion
     case insertionInterrupted
+    case secureTextField
     case insertionFailed(AXError)
 
     public var errorDescription: String? {
@@ -26,6 +27,8 @@ public enum TargetInjectionError: LocalizedError, Sendable {
             "The original text field lost focus during insertion; Voice stopped, but may have inserted a prefix."
         case .insertionInterrupted:
             "Text insertion was interrupted after a prefix was inserted."
+        case .secureTextField:
+            "Voice will not use the clipboard to insert into a secure text field."
         case .insertionFailed(let error):
             "The target rejected text insertion (AX error \(error.rawValue))."
         }
@@ -52,6 +55,8 @@ struct TargetFingerprint: Equatable, Sendable {
     let subrole: String?
     let frame: CGRect?
 
+    var isSecureTextField: Bool { subrole == kAXSecureTextFieldSubrole as String }
+
     func matches(_ other: TargetFingerprint) -> Bool {
         guard let role, role == other.role, subrole == other.subrole,
             let frame, let otherFrame = other.frame
@@ -63,6 +68,12 @@ struct TargetFingerprint: Equatable, Sendable {
 }
 
 enum TextInsertionCompatibilityPolicy {
+    enum Method: Equatable {
+        case unavailable
+        case unicodeEvents
+        case clipboard
+    }
+
     static func allowsUnicodeEventFallback(
         manualFallbackEnabled: Bool,
         bundleIdentifier: String?
@@ -149,6 +160,8 @@ public final class AccessibilityTargetInjector: TargetInjecting {
 
     private let allowClipboardFallback: Bool
     private var allowUnicodeEventFallback: Bool
+    private var allowNamedClipboardFallback = false
+    private let clipboardInsertion = ClipboardTextInsertion()
     private static let logger = Logger(subsystem: "io.blacktop.Voice", category: "insertion")
 
     /// Focus queries are re-issued a few times before they count as a focus
@@ -168,8 +181,34 @@ public final class AccessibilityTargetInjector: TargetInjecting {
         allowUnicodeEventFallback = enabled
     }
 
+    /// Enables Voice's compatibility setting, including clipboard paste for
+    /// the specific hosts that ignore Unicode key-event payloads.
+    public func setCompatibilityInsertionEnabled(_ enabled: Bool) {
+        allowUnicodeEventFallback = enabled
+        allowNamedClipboardFallback = enabled
+    }
+
+    func compatibilityMethod(bundleIdentifier: String?) -> TextInsertionCompatibilityPolicy.Method {
+        // These hosts can translate the physical keycode instead of honoring
+        // CGEvent's Unicode payload. Keycode 0 then becomes repeated A keys.
+        let clipboardAllowed =
+            allowUnicodeEventFallback && (allowClipboardFallback || allowNamedClipboardFallback)
+        switch bundleIdentifier {
+        case "com.superlogical.rex", "com.openai.codex", "com.openai.chat":
+            return clipboardAllowed ? .clipboard : .unavailable
+        case "com.apple.Safari", "com.brave.Browser":
+            if clipboardAllowed { return .clipboard }
+            return allowUnicodeEventFallback ? .unicodeEvents : .unavailable
+        default:
+            return TextInsertionCompatibilityPolicy.allowsUnicodeEventFallback(
+                manualFallbackEnabled: allowUnicodeEventFallback,
+                bundleIdentifier: bundleIdentifier) ? .unicodeEvents : .unavailable
+        }
+    }
+
     public func captureTarget() throws -> InputTarget {
         guard VoicePermissions.hasAccessibilityAccess(prompt: true) else {
+            Self.logger.error("capture failed: Accessibility permission is unavailable")
             throw TargetInjectionError.accessibilityPermissionRequired
         }
         let system = AXUIElementCreateSystemWide()
@@ -179,23 +218,28 @@ public final class AccessibilityTargetInjector: TargetInjecting {
                 from: system
             )
         else {
+            Self.logger.error("capture failed: focused application is unavailable")
             throw TargetInjectionError.focusedApplicationUnavailable
         }
         var pid: pid_t = 0
         guard AXUIElementGetPid(application, &pid) == .success, pid != 0 else {
+            Self.logger.error("capture failed: focused application PID is unavailable")
             throw TargetInjectionError.focusedApplicationUnavailable
         }
+        let bundleIdentifier = NSRunningApplication(
+            processIdentifier: pid
+        )?.bundleIdentifier
         guard
             let element = Self.elementAttribute(
                 kAXFocusedUIElementAttribute,
                 from: application
             )
         else {
+            Self.logger.error(
+                "capture failed: focused element unavailable in \(bundleIdentifier ?? "?", privacy: .public)"
+            )
             throw TargetInjectionError.focusedElementUnavailable
         }
-        let bundleIdentifier = NSRunningApplication(
-            processIdentifier: pid
-        )?.bundleIdentifier
         let fingerprint = Self.fingerprint(of: element)
         Self.logger.info(
             """
@@ -243,13 +287,8 @@ public final class AccessibilityTargetInjector: TargetInjecting {
             )
         }
 
-        let unicodeFallbackAllowed =
-            TextInsertionCompatibilityPolicy
-            .allowsUnicodeEventFallback(
-                manualFallbackEnabled: allowUnicodeEventFallback,
-                bundleIdentifier: target.bundleIdentifier
-            )
-        guard unicodeFallbackAllowed else {
+        let method = compatibilityMethod(bundleIdentifier: target.bundleIdentifier)
+        guard method != .unavailable else {
             Self.logger.error(
                 "no compatibility path for \(target.bundleIdentifier ?? "?", privacy: .public)"
             )
@@ -257,6 +296,10 @@ public final class AccessibilityTargetInjector: TargetInjecting {
         }
         let compatibilityText = UnicodeEventPayloadPlan.sanitizedText(text)
         if compatibilityText.isEmpty {
+            return
+        }
+        if method == .clipboard {
+            try await paste(compatibilityText, into: target, anchor: anchor)
             return
         }
         if try await postUnicode(compatibilityText, into: target, anchor: anchor) {
@@ -405,18 +448,32 @@ public final class AccessibilityTargetInjector: TargetInjecting {
         into target: InputTarget,
         anchor: AXUIElement
     ) async throws {
-        let pasteboard = NSPasteboard.general
-        let snapshot = PasteboardSnapshot(pasteboard: pasteboard)
-        defer { snapshot.restore(to: pasteboard) }
-        pasteboard.clearContents()
-        guard pasteboard.setString(text, forType: .string) else {
-            throw TargetInjectionError.insertionFailed(.cannotComplete)
+        let menuCommand =
+            target.bundleIdentifier == "com.apple.Safari"
+            ? try AccessibilityPasteCommand.find(for: target.pid) : nil
+        try await clipboardInsertion.perform(
+            text,
+            verifyTarget: {
+                let focus = try self.verifyStillFocused(target, anchor: anchor)
+                guard !target.fingerprint.isSecureTextField,
+                    !Self.fingerprint(of: focus.element).isSecureTextField
+                else { throw TargetInjectionError.secureTextField }
+            },
+            validatePaste: { try menuCommand?.validate() },
+            paste: {
+                if let menuCommand {
+                    try menuCommand.perform()
+                    return
+                }
+                guard Self.postKey(code: 9, modifiers: .maskCommand, to: target.pid) else {
+                    throw TargetInjectionError.insertionFailed(.cannotComplete)
+                }
+            })
+        if menuCommand != nil {
+            Self.logger.notice("invoked Safari Paste command for pid \(target.pid)")
+        } else {
+            Self.logger.info("posted clipboard paste to pid \(target.pid)")
         }
-        _ = try verifyStillFocused(target, anchor: anchor)
-        guard Self.postKey(code: 9, modifiers: .maskCommand, to: target.pid) else {
-            throw TargetInjectionError.insertionFailed(.cannotComplete)
-        }
-        try? await Task.sleep(for: .milliseconds(150))
     }
 
     private static func elementAttribute(
@@ -565,37 +622,5 @@ public final class AccessibilityTargetInjector: TargetInjecting {
         down.postToPid(pid)
         up.postToPid(pid)
         return true
-    }
-}
-
-@MainActor
-private struct PasteboardSnapshot {
-    private struct Item {
-        let values: [(NSPasteboard.PasteboardType, Data)]
-    }
-
-    private let items: [Item]
-
-    init(pasteboard: NSPasteboard) {
-        items = (pasteboard.pasteboardItems ?? []).map { item in
-            Item(
-                values: item.types.compactMap { type in
-                    item.data(forType: type).map { (type, $0) }
-                })
-        }
-    }
-
-    func restore(to pasteboard: NSPasteboard) {
-        pasteboard.clearContents()
-        let restored = items.map { item in
-            let pasteboardItem = NSPasteboardItem()
-            for (type, data) in item.values {
-                pasteboardItem.setData(data, forType: type)
-            }
-            return pasteboardItem
-        }
-        if !restored.isEmpty {
-            pasteboard.writeObjects(restored)
-        }
     }
 }

@@ -259,7 +259,7 @@ final class VoiceAppModel {
     var lexiconCount = 0
     var compatibilityInsertionEnabled = true {
         didSet {
-            injector.setUnicodeEventFallbackEnabled(compatibilityInsertionEnabled)
+            injector.setCompatibilityInsertionEnabled(compatibilityInsertionEnabled)
             preferences.setCompatibilityInsertionEnabled(compatibilityInsertionEnabled)
         }
     }

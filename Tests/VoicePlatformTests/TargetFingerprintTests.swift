@@ -60,4 +60,11 @@ final class TargetFingerprintTests: XCTestCase {
         XCTAssertFalse(editor.matches(roleless))
         XCTAssertFalse(editor.matches(frameless))
     }
+
+    func testSecureTextFieldIsRecognizedWithoutReadingItsValue() {
+        let password = TargetFingerprint(
+            role: "AXTextField", subrole: "AXSecureTextField", frame: nil)
+        XCTAssertTrue(password.isSecureTextField)
+        XCTAssertFalse(editor.isSecureTextField)
+    }
 }

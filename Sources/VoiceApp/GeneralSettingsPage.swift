@@ -92,15 +92,15 @@ struct GeneralSettingsPage: View {
                 Divider()
 
                 Toggle(
-                    "Compatibility Unicode insertion for Zed and other apps",
+                    "Compatibility insertion for terminals and other apps",
                     isOn: $model.compatibilityInsertionEnabled
                 )
                 VoiceSupportingText(
-                    "On by default. Voice only falls back to PID-targeted Unicode events "
-                        + "when direct AX insertion is rejected, as it is by Zed terminals, "
-                        + "cmux, and Ghostty; apps that accept AX insertion are unaffected. "
-                        + "Voice still aborts if focus changes. Turn this off to require "
-                        + "direct AX insertion everywhere."
+                    "On by default. If direct Accessibility insertion is rejected, "
+                        + "Rex, ChatGPT, Safari, and Brave use a temporary local clipboard paste. "
+                        + "Voice restores the previous clipboard unless you copy something else. "
+                        + "Other apps use targeted Unicode events. Voice stops if focus changes "
+                        + "and never pastes through the clipboard into a detected password field."
                 )
             }
 

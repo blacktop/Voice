@@ -110,10 +110,12 @@ If the Event tap row does not read **Ready** after you change Privacy &
 Security, quit and reopen Voice. Then focus a text field, hold Right Option
 until the overlay says **Listening**, speak, and release.
 
-Voice tries Accessibility insertion first. When an app such as cmux, Ghostty,
-or Zed doesn't support it, Voice sends key events to that process one grapheme
-at a time. This fallback is enabled by default and only runs when direct
-insertion is unavailable.
+Voice tries Accessibility insertion first. For Rex, ChatGPT, Safari, and Brave,
+the compatibility fallback uses a temporary local clipboard paste and restores it,
+unless you have copied something else. Other apps, including cmux, Ghostty, and
+Zed, receive targeted Unicode key events. Compatibility insertion is enabled by
+default, stops if focus changes, and avoids clipboard paste into detected
+password fields.
 
 Pick a project in Settings to build a speech vocabulary from its file names.
 Voice doesn't open the files. Local history is off by default. If you enable
