@@ -52,18 +52,29 @@ struct NotificationClickTarget: Codable, Sendable, Equatable {
     }
 
     @MainActor
+    func activate() async throws {
+        try await activate(
+            selectTmux: TmuxNotification.select,
+            openZed: ZedNotification.activate,
+            raiseHost: TmuxNotification.raiseHost)
+    }
+
+    @MainActor
     func activate(
         selectTmux: (TmuxNotificationTarget) async -> TmuxProcessIdentity?,
         openZed: (ZedProjectTarget) async throws -> Void,
         raiseHost: (TmuxProcessIdentity) -> Void
     ) async throws {
+        try Task.checkCancellation()
         var client: TmuxProcessIdentity?
         if let tmux { client = await selectTmux(tmux) }
+        try Task.checkCancellation()
         if let zedProject {
             do {
                 try await openZed(zedProject)
                 return
             } catch {
+                try Task.checkCancellation()
                 if let client { raiseHost(client) }
                 throw error
             }
