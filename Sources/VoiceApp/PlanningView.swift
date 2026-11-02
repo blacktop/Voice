@@ -40,48 +40,42 @@ struct PlanningView: View {
     }
 
     var body: some View {
-        ZStack {
-            VoiceAmbientBackground(accent: connectionColor)
-
-            VStack(spacing: 0) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: VoiceVisualStyle.sectionSpacing) {
                 PlanningHeader(
                     status: connectionStatus,
                     statusSymbol: connectionSymbol,
                     statusColor: connectionColor
                 )
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: VoiceVisualStyle.sectionSpacing) {
-                        PlanningProjectCard(model: model)
+                PlanningProjectCard(model: model)
 
-                        if !model.agentConfigurationOptions.isEmpty {
-                            AgentConfigurationControls(model: model)
-                        }
-
-                        PlanningConversationView(
-                            transcript: model.presentation.transcript,
-                            agentMessage: agentMessage,
-                            phase: model.presentation.phase
-                        )
-                    }
-                    .frame(maxWidth: VoiceVisualStyle.contentWidth)
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 28)
-                    .padding(.top, 8)
-                    .padding(.bottom, 24)
+                if !model.agentConfigurationOptions.isEmpty {
+                    AgentConfigurationControls(model: model)
                 }
 
-                PlanningActionDock(
-                    connectTitle: connectButtonTitle,
-                    isConnected: model.isAgentConnected,
-                    isConnecting: model.isAgentConnecting,
-                    canExport: !model.lastExportableText.isEmpty,
-                    isSpeaking: model.isSpeakingPlanningResponse,
-                    connect: toggleConnection,
-                    export: model.exportLastSession,
-                    stopSpeaking: model.stopSpeaking
+                PlanningConversationView(
+                    transcript: model.presentation.transcript,
+                    agentMessage: agentMessage,
+                    phase: model.presentation.phase
                 )
             }
+            .frame(maxWidth: VoiceVisualStyle.contentWidth)
+            .frame(maxWidth: .infinity)
+            .padding(24)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .safeAreaBar(edge: .bottom) {
+            PlanningActionDock(
+                connectTitle: connectButtonTitle,
+                isConnected: model.isAgentConnected,
+                isConnecting: model.isAgentConnecting,
+                canExport: !model.lastExportableText.isEmpty,
+                isSpeaking: model.isSpeakingPlanningResponse,
+                connect: toggleConnection,
+                export: model.exportLastSession,
+                stopSpeaking: model.stopSpeaking
+            )
         }
     }
 
@@ -100,27 +94,20 @@ private struct PlanningHeader: View {
     let statusColor: Color
 
     var body: some View {
-        HStack(alignment: .center, spacing: 20) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Voice Planning")
-                    .font(.system(size: 32, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-                Text("Speak a problem through, keep the full response in view.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 20)
-
-            VoiceStatusPill(
+        VStack(alignment: .leading, spacing: 10) {
+            VoicePageHeader(
+                title: "Planning",
+                subtitle: "Speak a problem through, keep the full response in view.",
+                systemImage: "sparkles", color: .orange)
+            VoiceStatusLabel(
                 title: status,
                 systemImage: statusSymbol,
                 color: statusColor
             )
+            .padding(.leading, 58)
         }
-        .padding(.horizontal, 28)
-        .padding(.top, 24)
-        .padding(.bottom, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.bottom, 8)
     }
 }
 

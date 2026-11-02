@@ -3,9 +3,9 @@ import SwiftUI
 
 enum VoiceVisualStyle {
     static let contentWidth: CGFloat = 760
-    static let cornerRadius: CGFloat = 18
-    static let compactCornerRadius: CGFloat = 13
-    static let sectionSpacing: CGFloat = 18
+    static let cornerRadius: CGFloat = 14
+    static let compactCornerRadius: CGFloat = 8
+    static let sectionSpacing: CGFloat = 20
 }
 
 struct VoiceAppIcon: View {
@@ -22,25 +22,41 @@ struct VoiceAppIcon: View {
     }
 }
 
-struct VoiceAmbientBackground: View {
-    let accent: Color
+struct VoiceSymbolBadge: View {
+    let systemImage: String
+    let color: Color
+    let size: CGFloat
 
     var body: some View {
-        ZStack {
-            Color(nsColor: .windowBackgroundColor)
-            RadialGradient(
-                colors: [accent.opacity(0.12), .clear],
-                center: .topLeading,
-                startRadius: 20,
-                endRadius: 520
-            )
-            LinearGradient(
-                colors: [Color.white.opacity(0.025), .clear, Color.black.opacity(0.025)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+        Image(systemName: systemImage)
+            .font(.system(size: size * 0.48, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(color, in: .rect(cornerRadius: size * 0.24))
+            .accessibilityHidden(true)
+    }
+}
+
+struct VoicePageHeader: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let color: Color
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            VoiceSymbolBadge(systemImage: systemImage, color: color, size: 44)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.title2.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Text(subtitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
-        .ignoresSafeArea()
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -63,57 +79,42 @@ struct VoiceSectionCard<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 11) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.tint)
-                    .frame(width: 24, height: 24)
-                    .accessibilityHidden(true)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.headline)
-                    if let detail {
-                        VoiceSupportingText(detail)
-                    }
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Label(title, systemImage: systemImage)
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                if let detail {
+                    VoiceSupportingText(detail)
                 }
             }
+            .padding(.horizontal, 4)
 
-            Divider()
-                .opacity(0.65)
-
-            content
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Color(nsColor: .controlBackgroundColor).opacity(0.78),
-            in: RoundedRectangle(cornerRadius: VoiceVisualStyle.cornerRadius, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: VoiceVisualStyle.cornerRadius, style: .continuous)
-                .stroke(Color.primary.opacity(0.075), lineWidth: 1)
+            GroupBox {
+                VStack(alignment: .leading, spacing: 14) {
+                    content
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+            }
         }
     }
 }
 
-struct VoiceStatusPill: View {
+struct VoiceStatusLabel: View {
     let title: String
     let systemImage: String
     let color: Color
 
     var body: some View {
-        Label(title, systemImage: systemImage)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(color)
-            .lineLimit(1)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .glassEffect(
-                .regular.tint(color.opacity(0.14)),
-                in: .capsule
-            )
+        Label {
+            Text(title)
+                .foregroundStyle(.secondary)
+        } icon: {
+            Image(systemName: systemImage)
+                .foregroundStyle(color)
+        }
+        .font(.caption)
     }
 }
 

@@ -2,22 +2,16 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var model: VoiceAppModel
-    @State private var selection: SettingsDestination = .general
+    @State private var selection: SettingsDestination? = .general
 
     var body: some View {
-        ZStack {
-            VoiceAmbientBackground(accent: selection.tint)
-
-            HStack(spacing: 0) {
-                SettingsNavigation(selection: $selection)
-                    .frame(width: 190)
-
-                Divider()
-
-                SettingsDetail(selection: selection, model: model)
-                    .tint(selection.tint)
-            }
+        NavigationSplitView {
+            SettingsNavigation(selection: $selection)
+                .navigationSplitViewColumnWidth(min: 185, ideal: 210, max: 260)
+        } detail: {
+            SettingsDetail(selection: selection ?? .general, model: model)
         }
+        .navigationSplitViewStyle(.balanced)
     }
 }
 
@@ -60,98 +54,51 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
         }
     }
 
-    var tint: Color {
+    var color: Color {
         switch self {
-        case .general: .cyan
+        case .general: .blue
         case .speech: .purple
         case .planning: .orange
-        case .diagnostics: .blue
+        case .diagnostics: .teal
         }
     }
 }
 
 private struct SettingsNavigation: View {
-    @Binding var selection: SettingsDestination
+    @Binding var selection: SettingsDestination?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 5) {
-                Image(systemName: "waveform.circle.fill")
-                    .font(.system(size: 34, weight: .medium))
-                    .foregroundStyle(.tint)
-                    .accessibilityHidden(true)
-                Text("Voice")
-                    .font(.system(size: 25, weight: .bold, design: .rounded))
-                Text("Private speech tools")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 18)
-            .padding(.top, 24)
-            .padding(.bottom, 22)
-
-            GlassEffectContainer(spacing: 9) {
-                VStack(spacing: 9) {
-                    ForEach(SettingsDestination.allCases) { destination in
-                        SettingsNavigationButton(
-                            destination: destination,
-                            isSelected: selection == destination
-                        ) {
-                            withAnimation(.easeOut(duration: 0.18)) {
-                                selection = destination
-                            }
-                        }
-                    }
+            HStack(spacing: 10) {
+                VoiceAppIcon(size: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Voice")
+                        .font(.headline)
+                    Text("Private speech tools")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
-            .padding(.horizontal, 10)
+            .padding(16)
 
-            Spacer()
+            List(SettingsDestination.allCases, selection: $selection) { destination in
+                Label {
+                    Text(destination.title)
+                } icon: {
+                    VoiceSymbolBadge(
+                        systemImage: destination.systemImage, color: destination.color, size: 20)
+                }
+                .tag(destination)
+            }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
 
             Label("On-device by default", systemImage: "lock.shield.fill")
-                .font(.caption2.weight(.medium))
+                .font(.caption)
                 .foregroundStyle(.secondary)
-                .padding(18)
+                .padding(16)
         }
-        .background(Color.primary.opacity(0.018))
-    }
-}
-
-private struct SettingsNavigationButton: View {
-    let destination: SettingsDestination
-    let isSelected: Bool
-    let action: () -> Void
-
-    private var glass: Glass {
-        if isSelected {
-            return .regular.tint(destination.tint.opacity(0.2)).interactive()
-        }
-        return .identity
-    }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: destination.systemImage)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(isSelected ? destination.tint : .secondary)
-                    .frame(width: 20)
-                Text(destination.title)
-                    .font(.subheadline.weight(isSelected ? .semibold : .regular))
-                    .foregroundStyle(.primary)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusEffectDisabled()
-        .glassEffect(
-            glass,
-            in: .rect(cornerRadius: VoiceVisualStyle.compactCornerRadius)
-        )
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .navigationTitle("Settings")
     }
 }
 
@@ -160,33 +107,13 @@ private struct SettingsDetail: View {
     let model: VoiceAppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 13) {
-                Image(systemName: selection.systemImage)
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundStyle(selection.tint)
-                    .frame(width: 34, height: 34)
-                    .glassEffect(
-                        .regular.tint(selection.tint.opacity(0.16)),
-                        in: .rect(cornerRadius: 10)
-                    )
-                    .accessibilityHidden(true)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(selection.title)
-                        .font(.system(size: 27, weight: .bold, design: .rounded))
-                        .lineLimit(1)
-                    Text(selection.subtitle)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            .padding(.horizontal, 28)
-            .padding(.top, 24)
-            .padding(.bottom, 18)
-
-            ScrollView {
+        ScrollView {
+            VStack(alignment: .leading, spacing: VoiceVisualStyle.sectionSpacing) {
+                VoicePageHeader(
+                    title: selection.title, subtitle: selection.subtitle,
+                    systemImage: selection.systemImage, color: selection.color
+                )
+                .padding(.bottom, 8)
                 Group {
                     switch selection {
                     case .general:
@@ -199,12 +126,12 @@ private struct SettingsDetail: View {
                         DiagnosticsSettingsPage(model: model)
                     }
                 }
-                .frame(maxWidth: VoiceVisualStyle.contentWidth)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 28)
-                .padding(.bottom, 28)
             }
+            .frame(maxWidth: VoiceVisualStyle.contentWidth, alignment: .leading)
+            .frame(maxWidth: .infinity)
+            .padding(24)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .navigationTitle(selection.title)
     }
 }

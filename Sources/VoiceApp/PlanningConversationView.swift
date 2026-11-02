@@ -11,7 +11,6 @@ struct PlanningConversationView: View {
             PlanningMessageSurface(
                 title: "You said",
                 systemImage: "waveform",
-                accent: .blue,
                 text: transcript.isEmpty ? "Hold Right Option to talk." : transcript,
                 isPlaceholder: transcript.isEmpty,
                 minimumHeight: 76
@@ -20,7 +19,6 @@ struct PlanningConversationView: View {
             PlanningMessageSurface(
                 title: phase == .speaking ? "Agent · speaking" : "Agent",
                 systemImage: phase == .speaking ? "speaker.wave.2.fill" : "sparkles",
-                accent: .purple,
                 text: agentMessage
                     ?? "Connect a planning model, then hold Right Option to talk.",
                 isPlaceholder: agentMessage == nil,
@@ -33,17 +31,12 @@ struct PlanningConversationView: View {
 private struct PlanningMessageSurface: View {
     let title: String
     let systemImage: String
-    let accent: Color
     let text: String
     let isPlaceholder: Bool
     let minimumHeight: CGFloat
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            Label(title, systemImage: systemImage)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(accent)
-
+        VoiceSectionCard(title, systemImage: systemImage) {
             Text(text)
                 .font(.body)
                 .foregroundStyle(isPlaceholder ? .secondary : .primary)
@@ -51,16 +44,6 @@ private struct PlanningMessageSurface: View {
                 .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .topLeading)
                 .textSelection(.enabled)
         }
-        .padding(18)
-        .background(
-            accent.opacity(0.045),
-            in: RoundedRectangle(cornerRadius: VoiceVisualStyle.cornerRadius, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: VoiceVisualStyle.cornerRadius, style: .continuous)
-                .stroke(accent.opacity(0.16), lineWidth: 1)
-        }
-        .animation(.easeOut(duration: 0.2), value: title)
     }
 }
 
@@ -114,14 +97,9 @@ struct PlanningActionDock: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            .padding(12)
-            .glassEffect(
-                .regular,
-                in: .rect(cornerRadius: VoiceVisualStyle.cornerRadius)
-            )
+            .controlSize(.regular)
         }
-        .padding(.horizontal, 28)
-        .padding(.top, 10)
-        .padding(.bottom, 22)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 12)
     }
 }

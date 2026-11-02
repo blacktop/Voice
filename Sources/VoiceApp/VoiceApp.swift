@@ -40,12 +40,13 @@ struct VoiceApplication: App {
 
         Settings {
             SettingsView(model: model)
-                .frame(width: 860, height: 700)
+                .frame(minWidth: 800, minHeight: 600)
                 .background {
                     WindowTrackingView { window in
                         model.registerSettingsWindow(window)
                     }
                 }
         }
+        .defaultSize(width: 860, height: 700)
     }
 }

@@ -87,6 +87,9 @@ final class StatusPanelController {
 struct StatusOverlayView: View {
     static let preferredSize = CGSize(width: 460, height: 104)
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
     let presentation: VoicePresentation
     let onDevicePlanning: Bool
 
@@ -94,7 +97,9 @@ struct StatusOverlayView: View {
         HStack(spacing: 14) {
             Image(systemName: symbol)
                 .font(.system(size: 24, weight: .semibold))
-                .symbolEffect(.pulse, isActive: presentation.phase == .listening)
+                .symbolEffect(
+                    .pulse, isActive: presentation.phase == .listening && !reduceMotion
+                )
                 .foregroundStyle(accent)
                 .frame(width: 34)
 
@@ -118,10 +123,18 @@ struct StatusOverlayView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .background {
+            if reduceTransparency {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color(nsColor: .windowBackgroundColor))
+            }
+        }
+        .glassEffect(reduceTransparency ? .identity : .regular, in: .rect(cornerRadius: 16))
         .overlay {
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(.white.opacity(0.12), lineWidth: 1)
+            if contrast == .increased {
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+            }
         }
         .padding(8)
         .frame(

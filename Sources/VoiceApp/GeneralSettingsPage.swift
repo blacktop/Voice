@@ -10,16 +10,16 @@ struct GeneralSettingsPage: View {
                 detail: "Voice needs all three permissions for capture and target-safe insertion.",
                 systemImage: "checkmark.shield"
             ) {
-                HStack(spacing: 10) {
-                    PermissionStatusTile(
+                VStack(spacing: 10) {
+                    PermissionStatusRow(
                         title: "Microphone",
                         granted: model.microphoneGranted
                     )
-                    PermissionStatusTile(
+                    PermissionStatusRow(
                         title: "Accessibility",
                         granted: model.accessibilityGranted
                     )
-                    PermissionStatusTile(
+                    PermissionStatusRow(
                         title: "Input Monitoring",
                         granted: model.inputMonitoringGranted
                     )
@@ -118,32 +118,20 @@ struct GeneralSettingsPage: View {
     }
 }
 
-private struct PermissionStatusTile: View {
+private struct PermissionStatusRow: View {
     let title: String
     let granted: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                .font(.title3)
-                .foregroundStyle(granted ? .green : .orange)
-                .accessibilityHidden(true)
+        HStack {
             Text(title)
-                .font(.caption.weight(.semibold))
-                .lineLimit(1)
-            Text(granted ? "Granted" : "Required")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            (granted ? Color.green : Color.orange).opacity(0.055),
-            in: RoundedRectangle(
-                cornerRadius: VoiceVisualStyle.compactCornerRadius,
-                style: .continuous
+            Spacer()
+            Label(
+                granted ? "Granted" : "Required",
+                systemImage: granted ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
             )
-        )
+            .foregroundStyle(granted ? .green : .orange)
+        }
         .accessibilityElement(children: .combine)
     }
 }
