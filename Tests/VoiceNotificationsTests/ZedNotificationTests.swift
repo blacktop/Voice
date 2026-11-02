@@ -137,8 +137,7 @@ final class ZedNotificationTests: XCTestCase {
         } catch {
             XCTAssertTrue(error.localizedDescription.contains("within"))
         }
-        timedOut.waitUntilExit()
-        XCTAssertNotEqual(timedOut.terminationStatus, 0)
+        assertStopped(timedOut)
 
         let cancelled = process("/bin/sleep", ["30"])
         let task = Task { try await ZedNotification.run(cancelled) }
@@ -154,8 +153,16 @@ final class ZedNotificationTests: XCTestCase {
         } catch {
             XCTFail("unexpected cancellation error: \(error)")
         }
-        cancelled.waitUntilExit()
-        XCTAssertNotEqual(cancelled.terminationStatus, 0)
+        assertStopped(cancelled)
+    }
+
+    private func assertStopped(
+        _ process: Process, file: StaticString = #filePath, line: UInt = #line
+    ) {
+        guard !process.isRunning else {
+            return XCTFail("Zed command returned before its child stopped", file: file, line: line)
+        }
+        XCTAssertNotEqual(process.terminationStatus, 0, file: file, line: line)
     }
 
     @MainActor

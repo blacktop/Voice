@@ -145,23 +145,36 @@ enum ZedNotification {
             continuation.finish()
         }
         defer {
-            if process.isRunning {
-                process.terminate()
-                if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
-            }
             process.terminationHandler = nil
             continuation.finish()
         }
+        do {
+            try await start(process)
+            try Task.checkCancellation()
+            let status = try await terminationStatus(exits, timeout: timeout)
+            guard status == 0 else {
+                throw VoiceNotificationError(
+                    "Zed could not open the project (exit status \(status))")
+            }
+        } catch {
+            await stop(process)
+            throw error
+        }
+    }
+
+    private static func start(_ process: Process) async throws {
         do { try await BlockingCall.run { try process.run() } } catch {
             let failure = error as NSError
             throw VoiceNotificationError(
                 "could not start Zed's bundled CLI: \(failure.localizedDescription) "
                     + "(\(failure.domain) \(failure.code))")
         }
-        let status = try await terminationStatus(exits, timeout: timeout)
-        guard status == 0 else {
-            throw VoiceNotificationError("Zed could not open the project (exit status \(status))")
-        }
+    }
+
+    private static func stop(_ process: Process) async {
+        guard process.isRunning else { return }
+        _ = kill(process.processIdentifier, SIGKILL)
+        _ = try? await BlockingCall.run { process.waitUntilExit() }
     }
 
     private static func terminationStatus(_ exits: AsyncStream<Int32>, timeout: Duration)
