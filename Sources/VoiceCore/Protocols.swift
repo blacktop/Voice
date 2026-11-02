@@ -27,7 +27,22 @@ extension SpeechRecognizing {
 
 public protocol SpeechOutputting: Sendable {
     func speak(_ text: String, voiceIdentifier: String?) async throws
+    func speak(
+        _ text: String, voiceIdentifier: String?,
+        onPlaybackStarted: @escaping @Sendable () -> Void
+    ) async throws
     func stopImmediately() async
+}
+
+extension SpeechOutputting {
+    /// Engines without playback observation keep the caller in its preparing
+    /// state until completion instead of reporting audio before it exists.
+    public func speak(
+        _ text: String, voiceIdentifier: String?,
+        onPlaybackStarted _: @escaping @Sendable () -> Void
+    ) async throws {
+        try await speak(text, voiceIdentifier: voiceIdentifier)
+    }
 }
 
 public struct AgentConfiguration: Sendable {

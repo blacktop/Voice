@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import VoiceMLXRuntime
 
 /// What a stretch of document text is, so narration can cast it. The
@@ -90,15 +91,17 @@ enum SpeechNarration {
         player: any SpeechChunkPlaying,
         streaming: Bool,
         onTiming: @Sendable (SpeechSegmentTiming) -> Void,
-        onSkipped: @Sendable (Int, SpeechSegmentSkipReason) -> Void
+        onSkipped: @Sendable (Int, SpeechSegmentSkipReason) -> Void,
+        onPlaybackStarted: @escaping @Sendable () -> Void = {}
     ) async throws {
         var producedAudio = false
+        let playback = PlaybackStart(onPlaybackStarted)
         for (index, utterance) in utterances.enumerated() {
             try Task.checkCancellation()
             do {
                 let timing = try await render(
                     utterance, index: index + 1, runtime: runtime, player: player,
-                    streaming: streaming)
+                    streaming: streaming, playback: playback)
                 if timing.audioSeconds > 0 {
                     producedAudio = true
                 } else {
@@ -114,6 +117,22 @@ enum SpeechNarration {
         try Task.checkCancellation()
         guard producedAudio else { throw MLXSpeechOutputError.noAudioProduced }
         try await player.awaitPlaybackCompletion()
+    }
+
+    private final class PlaybackStart: Sendable {
+        private let reported = Mutex(false)
+        private let action: @Sendable () -> Void
+
+        init(_ action: @escaping @Sendable () -> Void) { self.action = action }
+
+        func report() {
+            let first = reported.withLock { reported in
+                guard !reported else { return false }
+                reported = true
+                return true
+            }
+            if first { action() }
+        }
     }
 
     private struct SegmentAudio {
@@ -146,13 +165,14 @@ enum SpeechNarration {
     /// Owns the stream until it finishes or its producer has been cancelled.
     private static func render(
         _ utterance: SpeechUtterance, index: Int, runtime: any MLXTTSRuntimeServing,
-        player: any SpeechChunkPlaying, streaming: Bool
+        player: any SpeechChunkPlaying, streaming: Bool, playback: PlaybackStart
     ) async throws -> SpeechSegmentTiming {
         let started = ContinuousClock.now
         let chunks = try await runtime.synthesize(
             text: utterance.text, request: utterance.request, language: "English")
         do {
-            var audio = try await collect(chunks, player: player, streaming: streaming)
+            var audio = try await collect(
+                chunks, player: player, streaming: streaming, playback: playback)
             let generation = max(
                 0, started.duration(to: .now) / .seconds(1) - audio.queueWaitSeconds)
             var trimmed = 0.0
@@ -162,6 +182,7 @@ enum SpeechNarration {
                 trimmed = prepared.trimmedSeconds
                 let queued = ContinuousClock.now
                 try await player.enqueue(samples: prepared.samples, sampleRate: sampleRate)
+                playback.report()
                 audio.queueWaitSeconds += queued.duration(to: .now) / .seconds(1)
             }
             return SpeechSegmentTiming(
@@ -179,7 +200,7 @@ enum SpeechNarration {
     /// chunk immediately and retains no audio for later playback.
     private static func collect(
         _ chunks: AsyncThrowingStream<MLXTTSAudioChunk, Error>,
-        player: any SpeechChunkPlaying, streaming: Bool
+        player: any SpeechChunkPlaying, streaming: Bool, playback: PlaybackStart
     ) async throws -> SegmentAudio {
         var audio = SegmentAudio()
         for try await chunk in chunks {
@@ -189,6 +210,7 @@ enum SpeechNarration {
             if streaming {
                 let queued = ContinuousClock.now
                 try await player.enqueue(samples: chunk.samples, sampleRate: chunk.sampleRate)
+                playback.report()
                 audio.queueWaitSeconds += queued.duration(to: .now) / .seconds(1)
             }
         }

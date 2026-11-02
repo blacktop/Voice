@@ -23,6 +23,14 @@ public actor SwitchableSpeechOutput: SpeechOutputting {
         try await engine.speak(text, voiceIdentifier: voiceIdentifier)
     }
 
+    public func speak(
+        _ text: String, voiceIdentifier: String?,
+        onPlaybackStarted: @escaping @Sendable () -> Void
+    ) async throws {
+        try await engine.speak(
+            text, voiceIdentifier: voiceIdentifier, onPlaybackStarted: onPlaybackStarted)
+    }
+
     public func stopImmediately() async {
         await engine.stopImmediately()
     }

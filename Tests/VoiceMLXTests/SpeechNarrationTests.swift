@@ -10,6 +10,23 @@ private func narrator(_ text: String) -> [SpeechNarrationBlock] {
 }
 
 final class SpeechNarrationTests: XCTestCase {
+    func testPlaybackStartFiresOnceAfterTheFirstNonemptyBuffer() async throws {
+        for streaming in [false, true] {
+            let player = NarrationTestPlayer()
+            let starts = Mutex(0)
+            let output = MLXSpeechOutput(
+                runtime: NarrationTestRuntime(emptyAt: 1),
+                configuration: .preset(.ryan, style: nil), player: player)
+            try await output.narrate(
+                narrator("Empty.\n\nFirst audio.\n\nMore audio."), streaming: streaming,
+                onPlaybackStarted: {
+                    XCTAssertFalse(player.playedBuffers.isEmpty)
+                    starts.withLock { $0 += 1 }
+                })
+            XCTAssertEqual(starts.withLock { $0 }, 1)
+        }
+    }
+
     func testSilenceMeasurementSpansChunksAndExcludesEdges() {
         var meter = SpeechSilenceMeter()
         meter.observe([0, 0, 0, 0.2, 0, 0], sampleRate: 10)

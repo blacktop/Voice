@@ -7,6 +7,7 @@ public final class AppleSpeechOutput: NSObject, SpeechOutputting {
     private let synthesizer = AVSpeechSynthesizer()
     private var activeUtterance: AVSpeechUtterance?
     private var completion: CheckedContinuation<Void, Error>?
+    private var playbackStarted: (@Sendable () -> Void)?
     private lazy var delegateProxy = AppleSpeechDelegateProxy(
         onStart: { [weak self] id in
             Task { @MainActor [weak self] in
@@ -32,14 +33,25 @@ public final class AppleSpeechOutput: NSObject, SpeechOutputting {
     // caller isolation), so the witnesses stay nonisolated and hop to the main
     // actor, where AVSpeechSynthesizer must be driven.
     public nonisolated func speak(_ text: String, voiceIdentifier: String?) async throws {
-        try await performSpeak(text, voiceIdentifier: voiceIdentifier)
+        try await performSpeak(text, voiceIdentifier: voiceIdentifier, onPlaybackStarted: {})
+    }
+
+    public nonisolated func speak(
+        _ text: String, voiceIdentifier: String?,
+        onPlaybackStarted: @escaping @Sendable () -> Void
+    ) async throws {
+        try await performSpeak(
+            text, voiceIdentifier: voiceIdentifier, onPlaybackStarted: onPlaybackStarted)
     }
 
     public nonisolated func stopImmediately() async {
         await performStop()
     }
 
-    private func performSpeak(_ text: String, voiceIdentifier: String?) async throws {
+    private func performSpeak(
+        _ text: String, voiceIdentifier: String?,
+        onPlaybackStarted: @escaping @Sendable () -> Void
+    ) async throws {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         performStop()
 
@@ -55,12 +67,14 @@ public final class AppleSpeechOutput: NSObject, SpeechOutputting {
         }
         utterance.rate = 0.52
         activeUtterance = utterance
+        playbackStarted = onPlaybackStarted
 
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation {
                 (continuation: CheckedContinuation<Void, Error>) in
                 guard !Task.isCancelled else {
                     activeUtterance = nil
+                    playbackStarted = nil
                     continuation.resume(throwing: CancellationError())
                     return
                 }
@@ -77,6 +91,7 @@ public final class AppleSpeechOutput: NSObject, SpeechOutputting {
     private func performStop() {
         let continuation = completion
         completion = nil
+        playbackStarted = nil
         self.activeUtterance = nil
         // Stopping before AVSpeechSynthesizer has started the utterance does not
         // dequeue it; handleStart(utteranceID:) catches that escape when the
@@ -114,13 +129,19 @@ public final class AppleSpeechOutput: NSObject, SpeechOutputting {
             }
     }
 
-    private func handleStart(utteranceID _: ObjectIdentifier) {
+    private func handleStart(utteranceID: ObjectIdentifier) {
         // An utterance cancelled before it started stays queued and begins
         // playing later. Kill it as soon as it starts — unless a newer speak()
         // is already pending behind it, in which case stopping would cancel
         // that one too.
-        guard activeUtterance == nil else { return }
-        synthesizer.stopSpeaking(at: .immediate)
+        guard let activeUtterance else {
+            synthesizer.stopSpeaking(at: .immediate)
+            return
+        }
+        guard ObjectIdentifier(activeUtterance) == utteranceID else { return }
+        let started = playbackStarted
+        playbackStarted = nil
+        started?()
     }
 
     private func finish(utteranceID: ObjectIdentifier, error: Error?) {
@@ -130,6 +151,7 @@ public final class AppleSpeechOutput: NSObject, SpeechOutputting {
             return
         }
         self.activeUtterance = nil
+        playbackStarted = nil
         let continuation = completion
         completion = nil
         if let error {

@@ -266,6 +266,16 @@ public actor MLXSpeechOutput: SpeechOutputting {
         )
     }
 
+    public func speak(
+        _ text: String, voiceIdentifier _: String?,
+        onPlaybackStarted: @escaping @Sendable () -> Void
+    ) async throws {
+        try await speak(
+            [SpeechNarrationBlock(role: .narrator, text: text)],
+            streaming: true, onStart: {}, onTiming: { _ in }, onSkipped: { _, _ in },
+            onPlaybackStarted: onPlaybackStarted)
+    }
+
     /// CLI narration: each block is read in the voice cast for its role. By
     /// default paragraph-sized groups are synthesized ahead of playback and
     /// only their quiet edges are normalized; `streaming` plays raw model
@@ -275,11 +285,12 @@ public actor MLXSpeechOutput: SpeechOutputting {
         streaming: Bool = false,
         onStart: @escaping @Sendable () -> Void = {},
         onTiming: @escaping @Sendable (SpeechSegmentTiming) -> Void = { _ in },
-        onSkipped: @escaping @Sendable (Int, SpeechSegmentSkipReason) -> Void = { _, _ in }
+        onSkipped: @escaping @Sendable (Int, SpeechSegmentSkipReason) -> Void = { _, _ in },
+        onPlaybackStarted: @escaping @Sendable () -> Void = {}
     ) async throws {
         try await speak(
             blocks, streaming: streaming, onStart: onStart, onTiming: onTiming,
-            onSkipped: onSkipped)
+            onSkipped: onSkipped, onPlaybackStarted: onPlaybackStarted)
     }
 
     /// Pauses the player timeline without discarding its scheduled buffers.
@@ -294,7 +305,8 @@ public actor MLXSpeechOutput: SpeechOutputting {
         streaming: Bool,
         onStart: @escaping @Sendable () -> Void,
         onTiming: @escaping @Sendable (SpeechSegmentTiming) -> Void,
-        onSkipped: @escaping @Sendable (Int, SpeechSegmentSkipReason) -> Void
+        onSkipped: @escaping @Sendable (Int, SpeechSegmentSkipReason) -> Void,
+        onPlaybackStarted: @escaping @Sendable () -> Void = {}
     ) async throws {
         let utterances = Self.utterances(
             for: blocks, voices: .cast(narrator: configuration), sampling: sampling,
@@ -313,7 +325,8 @@ public actor MLXSpeechOutput: SpeechOutputting {
         let task = Task {
             try await SpeechNarration.run(
                 utterances: utterances, runtime: runtime, player: player, streaming: streaming,
-                onTiming: onTiming, onSkipped: onSkipped)
+                onTiming: onTiming, onSkipped: onSkipped,
+                onPlaybackStarted: onPlaybackStarted)
         }
         speakTask = task
         onStart()

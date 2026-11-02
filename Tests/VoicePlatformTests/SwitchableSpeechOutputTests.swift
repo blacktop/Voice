@@ -43,6 +43,16 @@ final class SwitchableSpeechOutputTests: XCTestCase {
             XCTFail("Unexpected error type: \(error)")
         }
     }
+
+    func testPlaybackStartComesFromTheCurrentEngine() async throws {
+        let started = expectation(description: "engine reported audio")
+        let engine = RecordingSpeechOutput()
+        let router = SwitchableSpeechOutput(engine: engine)
+        try await router.speak("hello", voiceIdentifier: nil) { started.fulfill() }
+        await fulfillment(of: [started], timeout: 1)
+        let events = await engine.events
+        XCTAssertEqual(events, [.spoke("hello", nil)])
+    }
 }
 
 private actor RecordingSpeechOutput: SpeechOutputting {
@@ -63,6 +73,14 @@ private actor RecordingSpeechOutput: SpeechOutputting {
         if let speakError {
             throw speakError
         }
+    }
+
+    func speak(
+        _ text: String, voiceIdentifier: String?,
+        onPlaybackStarted: @escaping @Sendable () -> Void
+    ) async throws {
+        try await speak(text, voiceIdentifier: voiceIdentifier)
+        onPlaybackStarted()
     }
 
     func stopImmediately() async {
