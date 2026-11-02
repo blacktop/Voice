@@ -93,21 +93,32 @@ _local-build configuration action:
 release-signed: generate
     ./scripts/xcbuild.sh -quiet -project {{project}} -scheme {{scheme}} -configuration Release -destination '{{destination}}' -derivedDataPath {{release_derived_data}} -clonedSourcePackagesDirPath {{source_packages}} -onlyUsePackageVersionsFromResolvedFile ARCHS=arm64e ONLY_ACTIVE_ARCH=YES build
 
-# Install the signed app and both CLIs. The prefix applies to the CLI wrappers.
+# Build once, install the signed app and both CLIs, then relaunch.
+# The prefix applies to the CLI wrappers.
 install prefix="~/.local/bin":
     #!/usr/bin/env bash
     set -euo pipefail
     # Keep the app build and relaunch in the invoking user's GUI session.
     if [[ ${EUID} -eq 0 && -n ${SUDO_USER:-} ]]; then
-        sudo -u "$SUDO_USER" just install-app
+        sudo -u "$SUDO_USER" just _install-app
     else
-        just install-app
+        just _install-app
     fi
-    just install-cli {{quote(prefix)}}
-    just install-notify {{quote(prefix)}}
+    products="{{release_derived_data}}/Build/Products/Release"
+    just _install-cli-products "$products" {{quote(prefix)}}
+    just _install-notify-products "$products" {{quote(prefix)}}
+    if [[ ${EUID} -eq 0 && -n ${SUDO_USER:-} ]]; then
+        sudo -u "$SUDO_USER" just _launch-installed-app
+    else
+        just _launch-installed-app
+    fi
 
 # Build the signed Release app, install it into /Applications, and relaunch.
-install-app: release-signed
+install-app: _install-app
+    @just _launch-installed-app
+
+[private]
+_install-app: release-signed
     #!/usr/bin/env bash
     set -euo pipefail
     app="{{release_derived_data}}/Build/Products/Release/Voice.app"
@@ -116,16 +127,44 @@ install-app: release-signed
         exit 1
     fi
     just _verify-security-path "$app"
-    osascript -e 'quit app "Voice"' >/dev/null 2>&1 || true
-    # Wait for the process to exit so files are not replaced under it.
-    for _ in $(seq 1 20); do
-        pgrep -q -f "/Applications/Voice.app/Contents/MacOS/Voice" || break
-        sleep 0.5
-    done
+    owner_uid="$(id -u)"
+    app_is_running() {
+        local status=0
+        pgrep -u "$owner_uid" -f '^/Applications/Voice[.]app/Contents/MacOS/Voice([[:space:]]|$)' >/dev/null || status=$?
+        case "$status" in
+            0|1) return "$status" ;;
+            *) echo "error: cannot check whether the installed Voice is still running." >&2; exit "$status" ;;
+        esac
+    }
+    if app_is_running; then
+        osascript -e 'tell application "/Applications/Voice.app" to quit' || true
+        for _ in $(seq 1 20); do
+            app_is_running || break
+            sleep 0.5
+        done
+        if app_is_running; then
+            echo "error: Voice is still running. Quit /Applications/Voice.app and retry." >&2
+            exit 1
+        fi
+    fi
     ditto "$app" /Applications/Voice.app
     codesign --verify --deep --strict /Applications/Voice.app
-    open -a /Applications/Voice.app
-    echo "installed and relaunched /Applications/Voice.app"
+    echo "installed /Applications/Voice.app"
+
+[private]
+_launch-installed-app:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Launch Services may briefly retain the process that just quit (-600).
+    for attempt in 1 2 3; do
+        if open -a /Applications/Voice.app; then
+            echo "relaunched /Applications/Voice.app"
+            exit 0
+        fi
+        if [[ "$attempt" -lt 3 ]]; then sleep 1; fi
+    done
+    echo "error: Voice was installed, but macOS could not launch it. Try: open -a /Applications/Voice.app" >&2
+    exit 1
 
 # The app is not sandboxed: it drives other apps through Accessibility, posts
 # keyboard events, and launches planning-agent processes, none of which a

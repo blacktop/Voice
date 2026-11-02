@@ -74,8 +74,9 @@ just test
 just install
 ```
 
-`just install` builds the signed Release app, installs it in `/Applications`,
-relaunches it, and installs `voice-say` and `voice-notify` under `~/.local/bin`.
+`just install` builds the signed Release app once, installs it in
+`/Applications`, installs both CLIs from that build under `~/.local/bin`, and
+relaunches Voice.
 To install one component, use `just install-app`, `just install-cli`
 (voice-say), or `just install-notify`. The CLI recipes and `just install`
 accept a different bin directory as an argument.
