@@ -41,12 +41,10 @@ public struct VoicePreferences: @unchecked Sendable {
         self.defaults = defaults
     }
 
-    /// Whether compatibility insertion may be used when direct
-    /// Accessibility insertion is rejected. Defaults to on: it is a strict
-    /// fallback that only runs where the alternative is a failed insertion,
-    /// and the editors this is needed for are common targets. Rex, ChatGPT,
-    /// Safari, and Brave use a temporary local clipboard paste; other apps use
-    /// Unicode events.
+    /// Whether compatibility insertion may be used. Defaults to on. ChatGPT
+    /// prefers its native Paste command; other apps first try direct
+    /// Accessibility insertion. Rex, Safari, and Brave can fall back to a
+    /// temporary local clipboard paste; other apps use Unicode events.
     public var compatibilityInsertionEnabled: Bool {
         defaults.object(forKey: Key.compatibilityInsertionEnabled) as? Bool ?? true
     }

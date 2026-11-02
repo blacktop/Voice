@@ -110,8 +110,9 @@ If the Event tap row does not read **Ready** after you change Privacy &
 Security, quit and reopen Voice. Then focus a text field, hold Right Option
 until the overlay says **Listening**, speak, and release.
 
-Voice tries Accessibility insertion first. For Rex, ChatGPT, Safari, and Brave,
-the compatibility fallback uses a temporary local clipboard paste and restores it,
+Voice tries Accessibility insertion first, except that ChatGPT uses its native
+Paste command when compatibility insertion is enabled. Rex, Safari, and Brave
+can fall back to a temporary local clipboard paste. Voice restores the clipboard
 unless you have copied something else. Other apps, including cmux, Ghostty, and
 Zed, receive targeted Unicode key events. Compatibility insertion is enabled by
 default, stops if focus changes, and avoids clipboard paste into detected

@@ -74,6 +74,15 @@ enum TextInsertionCompatibilityPolicy {
         case clipboard
     }
 
+    static func prefersClipboardBeforeAccessibility(bundleIdentifier: String?) -> Bool {
+        bundleIdentifier == "com.openai.codex" || bundleIdentifier == "com.openai.chat"
+    }
+
+    static func usesNativePasteCommand(bundleIdentifier: String?) -> Bool {
+        bundleIdentifier == "com.apple.Safari"
+            || prefersClipboardBeforeAccessibility(bundleIdentifier: bundleIdentifier)
+    }
+
     static func allowsUnicodeEventFallback(
         manualFallbackEnabled: Bool,
         bundleIdentifier: String?
@@ -153,6 +162,7 @@ public protocol TargetInjecting: Sendable {
 /// and therefore use fail-closed focus checks immediately before delivery.
 @MainActor
 public final class AccessibilityTargetInjector: TargetInjecting {
+    private typealias DiagnosticReport = @MainActor (String) -> Void
     private struct UnicodeEventPair {
         let down: CGEvent
         let up: CGEvent
@@ -162,6 +172,9 @@ public final class AccessibilityTargetInjector: TargetInjecting {
     private var allowUnicodeEventFallback: Bool
     private var allowNamedClipboardFallback = false
     private let clipboardInsertion = ClipboardTextInsertion()
+    private let onDiagnostic: @MainActor @Sendable (String) -> Void
+    private var diagnosticGeneration = UUID()
+    private var diagnosticSteps: [String] = []
     private static let logger = Logger(subsystem: "io.blacktop.Voice", category: "insertion")
 
     /// Focus queries are re-issued a few times before they count as a focus
@@ -171,10 +184,12 @@ public final class AccessibilityTargetInjector: TargetInjecting {
 
     public init(
         allowUnicodeEventFallback: Bool = false,
-        allowClipboardFallback: Bool = false
+        allowClipboardFallback: Bool = false,
+        onDiagnostic: @escaping @MainActor @Sendable (String) -> Void = { _ in }
     ) {
         self.allowUnicodeEventFallback = allowUnicodeEventFallback
         self.allowClipboardFallback = allowClipboardFallback
+        self.onDiagnostic = onDiagnostic
     }
 
     public func setUnicodeEventFallbackEnabled(_ enabled: Bool) {
@@ -206,7 +221,14 @@ public final class AccessibilityTargetInjector: TargetInjecting {
         }
     }
 
+    func prefersClipboardBeforeAccessibility(bundleIdentifier: String?) -> Bool {
+        compatibilityMethod(bundleIdentifier: bundleIdentifier) == .clipboard
+            && TextInsertionCompatibilityPolicy.prefersClipboardBeforeAccessibility(
+                bundleIdentifier: bundleIdentifier)
+    }
+
     public func captureTarget() throws -> InputTarget {
+        _ = resetDiagnostics()
         guard VoicePermissions.hasAccessibilityAccess(prompt: true) else {
             Self.logger.error("capture failed: Accessibility permission is unavailable")
             throw TargetInjectionError.accessibilityPermissionRequired
@@ -258,8 +280,35 @@ public final class AccessibilityTargetInjector: TargetInjecting {
     }
 
     public func insert(_ text: String, into target: InputTarget) async throws {
-        guard !text.isEmpty else { return }
+        let generation = resetDiagnostics()
+        let report: DiagnosticReport = { [self] message in
+            recordDiagnostic(message, generation: generation)
+        }
+        report(
+            "Target: \(target.bundleIdentifier ?? "unknown") (pid \(target.pid)); "
+                + "role=\(target.fingerprint.role ?? "unknown"), "
+                + "subrole=\(target.fingerprint.subrole ?? "none")")
+        do {
+            try await performInsertion(text, into: target, report: report)
+        } catch {
+            report("Failed: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    private func performInsertion(
+        _ text: String, into target: InputTarget, report: DiagnosticReport
+    ) async throws {
+        guard !text.isEmpty else {
+            report("No text to insert.")
+            return
+        }
         let anchor = try verifyStillFocused(target, anchor: target.element).element
+        if prefersClipboardBeforeAccessibility(bundleIdentifier: target.bundleIdentifier) {
+            report("Route: native Paste command (ChatGPT compatibility)")
+            try await paste(text, into: target, anchor: anchor, report: report)
+            return
+        }
 
         var settable = DarwinBoolean(false)
         let settableStatus = AXUIElementIsAttributeSettable(
@@ -267,14 +316,18 @@ public final class AccessibilityTargetInjector: TargetInjecting {
             kAXSelectedTextAttribute as CFString,
             &settable
         )
+        report(
+            "AXSelectedText: query=\(settableStatus.rawValue), settable=\(settable.boolValue)")
         if settableStatus == .success, settable.boolValue {
             let result = AXUIElementSetAttributeValue(
                 anchor,
                 kAXSelectedTextAttribute as CFString,
                 text as CFString
             )
+            report("AXSelectedText write: \(result.rawValue)")
             if result == .success {
                 Self.logger.info("inserted \(text.count) characters via AXSelectedText")
+                report("Result: AX accepted the write; field contents were not verified.")
                 return
             }
             Self.logger.notice("AXSelectedText insertion failed: AXError \(result.rawValue)")
@@ -299,10 +352,13 @@ public final class AccessibilityTargetInjector: TargetInjecting {
             return
         }
         if method == .clipboard {
-            try await paste(compatibilityText, into: target, anchor: anchor)
+            report("Route: clipboard compatibility")
+            try await paste(compatibilityText, into: target, anchor: anchor, report: report)
             return
         }
+        report("Route: process-targeted Unicode events")
         if try await postUnicode(compatibilityText, into: target, anchor: anchor) {
+            report("Result: Unicode events posted; field contents were not verified.")
             return
         }
 
@@ -310,7 +366,22 @@ public final class AccessibilityTargetInjector: TargetInjecting {
             Self.logger.error("unicode events could not be built and clipboard fallback is off")
             throw TargetInjectionError.insertionFailed(.cannotComplete)
         }
-        try await paste(compatibilityText, into: target, anchor: anchor)
+        report("Route: clipboard fallback after Unicode event setup failed")
+        try await paste(compatibilityText, into: target, anchor: anchor, report: report)
+    }
+
+    private func resetDiagnostics() -> UUID {
+        diagnosticGeneration = UUID()
+        diagnosticSteps = []
+        return diagnosticGeneration
+    }
+
+    private func recordDiagnostic(_ message: String, generation: UUID) {
+        guard generation == diagnosticGeneration, diagnosticSteps.count < 12 else { return }
+        let bounded = String(decoding: message.utf8.prefix(1024), as: UTF8.self)
+            .components(separatedBy: .controlCharacters).joined(separator: " ")
+        diagnosticSteps.append(bounded)
+        onDiagnostic(diagnosticSteps.joined(separator: "\n"))
     }
 
     private struct VerifiedFocus {
@@ -446,11 +517,15 @@ public final class AccessibilityTargetInjector: TargetInjecting {
     private func paste(
         _ text: String,
         into target: InputTarget,
-        anchor: AXUIElement
+        anchor: AXUIElement,
+        report: DiagnosticReport
     ) async throws {
+        let usesNativeCommand = TextInsertionCompatibilityPolicy.usesNativePasteCommand(
+            bundleIdentifier: target.bundleIdentifier)
+        if usesNativeCommand { report("Paste command: locating the native menu item") }
         let menuCommand =
-            target.bundleIdentifier == "com.apple.Safari"
-            ? try AccessibilityPasteCommand.find(for: target.pid) : nil
+            usesNativeCommand ? try AccessibilityPasteCommand.find(for: target.pid) : nil
+        report("Clipboard: preparing temporary text")
         try await clipboardInsertion.perform(
             text,
             verifyTarget: {
@@ -459,18 +534,25 @@ public final class AccessibilityTargetInjector: TargetInjecting {
                     !Self.fingerprint(of: focus.element).isSecureTextField
                 else { throw TargetInjectionError.secureTextField }
             },
-            validatePaste: { try menuCommand?.validate() },
+            validatePaste: {
+                report("Clipboard: temporary text installed; validating delivery")
+                try menuCommand?.validate()
+            },
             paste: {
                 if let menuCommand {
                     try menuCommand.perform()
+                    report(
+                        "Result: native Paste command accepted; field contents were not verified.")
                     return
                 }
                 guard Self.postKey(code: 9, modifiers: .maskCommand, to: target.pid) else {
                     throw TargetInjectionError.insertionFailed(.cannotComplete)
                 }
+                report("Result: Command-V posted; field contents were not verified.")
             })
+        report("Clipboard: transaction finished with ownership-checked restoration")
         if menuCommand != nil {
-            Self.logger.notice("invoked Safari Paste command for pid \(target.pid)")
+            Self.logger.notice("invoked native Paste command for pid \(target.pid)")
         } else {
             Self.logger.info("posted clipboard paste to pid \(target.pid)")
         }

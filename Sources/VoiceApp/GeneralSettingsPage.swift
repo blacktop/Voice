@@ -96,8 +96,9 @@ struct GeneralSettingsPage: View {
                     isOn: $model.compatibilityInsertionEnabled
                 )
                 VoiceSupportingText(
-                    "On by default. If direct Accessibility insertion is rejected, "
-                        + "Rex, ChatGPT, Safari, and Brave use a temporary local clipboard paste. "
+                    "On by default. ChatGPT uses its native Paste command. "
+                        + "Other apps try direct Accessibility insertion first; "
+                        + "Rex, Safari, and Brave can fall back to a temporary local clipboard paste. "
                         + "Voice restores the previous clipboard unless you copy something else. "
                         + "Other apps use targeted Unicode events. Voice stops if focus changes "
                         + "and never pastes through the clipboard into a detected password field."

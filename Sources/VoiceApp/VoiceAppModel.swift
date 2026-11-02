@@ -285,6 +285,7 @@ final class VoiceAppModel {
     var lastRawTranscript = ""
     var lastCleanedTranscript = ""
     var lastCleanupSource: CleanedPrompt.Source?
+    var lastInsertionDiagnostic = ""
 
     private let overlay = StatusPanelController()
     @ObservationIgnored
@@ -294,7 +295,9 @@ final class VoiceAppModel {
     @ObservationIgnored
     private lazy var cleaner = AppleFoundationModelCleaner()
     @ObservationIgnored
-    private lazy var injector = AccessibilityTargetInjector()
+    private lazy var injector = AccessibilityTargetInjector { [weak self] diagnostic in
+        self?.lastInsertionDiagnostic = diagnostic
+    }
     @ObservationIgnored
     private lazy var mlxBenchmark = MLXModelBenchmark()
     private let preferences: VoicePreferences
@@ -637,6 +640,7 @@ final class VoiceAppModel {
 
     var hasLastTurnDiagnostics: Bool {
         !lastRawTranscript.isEmpty || !lastCleanedTranscript.isEmpty
+            || !lastInsertionDiagnostic.isEmpty
     }
 
     var lastTurnDiagnosticsText: String {
@@ -646,8 +650,11 @@ final class VoiceAppModel {
 
         Cleanup: \(lastCleanupSourceDescription)
 
-        Sent to target:
+        Prepared text:
         \(lastCleanedTranscript.isEmpty ? "(not available)" : lastCleanedTranscript)
+
+        Insertion:
+        \(lastInsertionDiagnostic.isEmpty ? "(not attempted)" : lastInsertionDiagnostic)
         """
     }
 
@@ -708,6 +715,7 @@ final class VoiceAppModel {
         lastRawTranscript = ""
         lastCleanedTranscript = ""
         lastCleanupSource = nil
+        lastInsertionDiagnostic = ""
     }
 
     func refreshPermissionsAndHotkey() {
@@ -1969,6 +1977,7 @@ final class VoiceAppModel {
             lastRawTranscript = presentation.transcript
             lastCleanedTranscript = ""
             lastCleanupSource = nil
+            lastInsertionDiagnostic = ""
         case .inserting, .planning, .speaking:
             if !presentation.transcript.isEmpty {
                 lastCleanedTranscript = presentation.transcript

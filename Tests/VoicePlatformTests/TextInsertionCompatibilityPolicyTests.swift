@@ -5,6 +5,35 @@ import XCTest
 
 final class TextInsertionCompatibilityPolicyTests: XCTestCase {
     @MainActor
+    func testChatGPTPrefersNativePasteOnlyWhenClipboardIsAuthorized() {
+        let injector = AccessibilityTargetInjector(allowUnicodeEventFallback: true)
+        for identifier in ["com.openai.codex", "com.openai.chat"] {
+            XCTAssertFalse(
+                injector.prefersClipboardBeforeAccessibility(bundleIdentifier: identifier))
+            injector.setCompatibilityInsertionEnabled(true)
+            XCTAssertTrue(
+                injector.prefersClipboardBeforeAccessibility(bundleIdentifier: identifier))
+            XCTAssertTrue(
+                TextInsertionCompatibilityPolicy.usesNativePasteCommand(
+                    bundleIdentifier: identifier))
+            injector.setCompatibilityInsertionEnabled(false)
+            XCTAssertFalse(
+                injector.prefersClipboardBeforeAccessibility(bundleIdentifier: identifier))
+        }
+        injector.setCompatibilityInsertionEnabled(true)
+        for identifier in ["com.superlogical.rex", "com.apple.Safari", "com.brave.Browser"] {
+            XCTAssertFalse(
+                injector.prefersClipboardBeforeAccessibility(bundleIdentifier: identifier))
+        }
+        XCTAssertTrue(
+            TextInsertionCompatibilityPolicy.usesNativePasteCommand(
+                bundleIdentifier: "com.apple.Safari"))
+        XCTAssertFalse(
+            TextInsertionCompatibilityPolicy.usesNativePasteCommand(
+                bundleIdentifier: "com.superlogical.rex"))
+    }
+
+    @MainActor
     func testExistingHostsKeepTheirUnicodeRoute() {
         let injector = AccessibilityTargetInjector(allowUnicodeEventFallback: true)
         for identifier in ["com.cmuxterm.app", "com.mitchellh.ghostty", "dev.zed.Zed"] {

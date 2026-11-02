@@ -23,25 +23,31 @@
 | ntfy destination and access token | Voice's macOS Keychain | `WhenUnlockedThisDeviceOnly`; replaced by `configure-push`; not synchronized |
 | Export | User-selected path | Explicit user action only |
 
-Direct Accessibility insertion is the default and remains bound to the exact
-captured element. When direct insertion is unsupported, Voice falls back to
+Insertion remains bound to the exact captured element. With compatibility
+insertion enabled, ChatGPT uses its native Paste command. Other apps try direct
+Accessibility insertion first. When it is unsupported, Voice falls back to
 PID-targeted Unicode events: automatically for cmux and Ghostty, and for other
 apps through the compatibility setting, which is **on by default**. Rex,
-ChatGPT, Safari, and Brave instead use a temporary clipboard paste when that
-setting is enabled, because they may interpret Unicode events as physical keys.
-Safari invokes its native Paste menu command through Accessibility; it does not
-use a global keyboard event or change Lockdown Mode. The temporary text is
-marked local-only, transient, and concealed. Other local clipboard readers
+Safari, and Brave instead use a temporary clipboard paste when that setting is
+enabled, because they may interpret Unicode events as physical keys. Safari
+and ChatGPT invoke their native Paste menu commands through Accessibility;
+Voice does not use a global keyboard event or change Lockdown Mode. The
+temporary text is marked local-only, transient, and concealed. Other local clipboard readers
 may still see it. Voice preserves up to 64 MiB of existing clipboard data and
 restores it only if no other process has changed the clipboard. macOS may ask
-for permission to read the previous clipboard. Apps that accept direct insertion
-never reach either fallback. Fields identified by Accessibility as secure text
+for permission to read the previous clipboard. Outside ChatGPT, apps that accept
+direct insertion never reach either fallback. Fields identified by Accessibility as secure text
 fields cannot use the clipboard route. Voice verifies the captured focus before
 each grapheme event or paste and aborts without refocusing if it changed. Focus can
 still change within the target process in the small interval between validation
 and event delivery. Clipboard ownership is checked again after focus verification,
 but these checks do not make shared-clipboard delivery atomic. Compatibility
 text cannot submit a terminal command by including a line break.
+
+The Diagnostics page keeps the latest prepared text and a bounded account of
+the target app, insertion route, and result in memory. These are replaced by
+the next turn or cleared by the user. Copying diagnostics is an explicit action;
+the insertion account does not contain text read from the destination field.
 
 Voice does not inspect shell startup files or unrelated credentials. The
 notification CLIs read only their explicit `VOICE_NOTIFY_NTFY_*` overrides and

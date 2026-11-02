@@ -16,13 +16,17 @@ struct DiagnosticsSettingsPage: View {
                         ? "No completed turn yet." : model.lastRawTranscript
                 )
                 DiagnosticTextBlock(
-                    title: "Sent to target",
+                    title: "Prepared text",
                     text: model.lastCleanedTranscript.isEmpty
                         ? "Not available." : model.lastCleanedTranscript
                 )
                 LabeledContent("Cleanup") {
                     Text(model.lastCleanupSourceDescription)
                 }
+                DiagnosticTextBlock(
+                    title: "Insertion",
+                    text: model.lastInsertionDiagnostic.isEmpty
+                        ? "Not attempted." : model.lastInsertionDiagnostic)
 
                 HStack {
                     Button("Copy diagnostics", action: model.copyLastTurnDiagnostics)
@@ -37,12 +41,12 @@ struct DiagnosticsSettingsPage: View {
 
             VoiceSectionCard(
                 "Reading the result",
-                detail: "Use the two strings to isolate which stage changed the text.",
+                detail: "Use the prepared text and insertion result to locate the failed stage.",
                 systemImage: "arrow.triangle.branch"
             ) {
                 VStack(alignment: .leading, spacing: 10) {
                     Label(
-                        "Raw correct, sent wrong: inspect cleanup",
+                        "Raw correct, prepared text wrong: inspect cleanup",
                         systemImage: "wand.and.stars"
                     )
                     Label(

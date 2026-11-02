@@ -10,13 +10,13 @@ enum AccessibilityPasteCommandError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unavailable:
-            "Safari's Paste command is unavailable for the original field."
+            "The app's Paste command is unavailable for the original field."
         case .ambiguous:
-            "Safari has more than one matching Paste command; nothing was pasted."
+            "The app has more than one matching Paste command; nothing was pasted."
         case .lookupLimit:
-            "Safari's menu could not be inspected within the safety limit."
+            "The app's menu could not be inspected within the safety limit."
         case .rejected(let error):
-            "Safari rejected the Paste command (AX error \(error.rawValue))."
+            "The app rejected the Paste command (AX error \(error.rawValue))."
         }
     }
 }
@@ -69,7 +69,7 @@ struct AccessibilityPasteCommand {
     }
 
     func perform() throws {
-        // The action may wait for Safari's web process. A timeout is an
+        // The action may wait for a web process. A timeout is an
         // uncertain handoff, so callers must not retry with another mechanism.
         let timeout = AXUIElementSetMessagingTimeout(item, 2)
         guard timeout == .success else { throw AccessibilityPasteCommandError.rejected(timeout) }
