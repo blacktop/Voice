@@ -30,6 +30,16 @@ struct PostNotification: AsyncParsableCommand {
     @Option(
         help: "Absolute local project directory to open or focus in Zed.", completion: .directory)
     var zedProject: String?
+    @Option(help: "Full Rex session ID; defaults to REX_SESSION for native Rex terminals.")
+    var rexSession: String?
+    @Option(help: "Full Rex block ID; defaults to REX_BLOCK.") var rexBlock: String?
+    @Option(
+        help: "Local Rex Unix socket path or unix URL; defaults to REX_SERVER.", completion: .file()
+    )
+    var rexServer: String?
+    @Option(help: "Full local Rex client ID, when more than one Mac client is connected.")
+    var rexClient: String?
+    @Flag(help: "Do not attach a native Rex click target.") var noRex = false
     @Flag(help: "Also publish through the configured ntfy server.") var push = false
 
     mutating func validate() throws {
@@ -43,7 +53,8 @@ struct PostNotification: AsyncParsableCommand {
     {
         try NotificationContext(
             pane: pane, noPane: noPane, tmuxSocket: tmuxSocket, zedProject: zedProject,
-            push: push,
+            rexSession: rexSession, rexBlock: rexBlock, rexServer: rexServer, rexClient: rexClient,
+            noRex: noRex, push: push,
             environment: environment
         ).message(
             title: title, subtitle: subtitle, message: message, group: group, details: details)

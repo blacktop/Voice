@@ -9,19 +9,38 @@ public struct VoiceNotificationError: LocalizedError, Sendable {
 /// Shared CLI context; constructing it never reads unrelated shell settings.
 public struct NotificationContext: Sendable {
     public let pane: String?
+    public let rex: RexNotificationContext?
     private let tmuxSocket: String?
     private let zedProject: String?
     private let push: Bool
     private let pushOverrides: NtfyOverrides?
 
     public init(
-        pane: String?, noPane: Bool, tmuxSocket: String?, zedProject: String? = nil, push: Bool,
+        pane: String?, noPane: Bool, tmuxSocket: String?, zedProject: String? = nil,
+        rexSession: String? = nil, rexBlock: String? = nil, rexServer: String? = nil,
+        rexClient: String? = nil, noRex: Bool = false, push: Bool,
         environment: [String: String]
     ) throws {
-        self.pane = try TmuxNotificationContext.pane(
-            explicit: pane, disabled: noPane, environment: environment)
-        self.tmuxSocket = TmuxNotificationContext.socket(
-            explicit: tmuxSocket, environment: environment)
+        let explicitRex =
+            rexSession != nil || rexBlock != nil || rexServer != nil || rexClient != nil
+        if explicitRex, noRex {
+            throw VoiceNotificationError("choose a Rex target or --no-rex")
+        }
+        if explicitRex, pane != nil || tmuxSocket != nil || zedProject != nil {
+            throw VoiceNotificationError("choose a Rex target or a tmux/Zed target")
+        }
+        let pane = try TmuxNotificationContext.pane(
+            explicit: pane, disabled: noPane || explicitRex, environment: environment)
+        let rex =
+            !noRex && (explicitRex || (pane == nil && tmuxSocket == nil && zedProject == nil))
+            ? try RexNotificationContext.resolve(
+                session: rexSession, block: rexBlock, server: rexServer, client: rexClient,
+                environment: environment) : nil
+        self.pane = pane
+        self.rex = rex
+        self.tmuxSocket =
+            rex == nil
+            ? TmuxNotificationContext.socket(explicit: tmuxSocket, environment: environment) : nil
         self.zedProject = try zedProject.map { try ZedProjectTarget.resolve($0).path }
         self.push = push
         pushOverrides =
@@ -40,7 +59,7 @@ public struct NotificationContext: Sendable {
         let details = details == Data(message.utf8) ? nil : details
         let result = NotificationMessage(
             title: title, subtitle: subtitle, message: message, group: group,
-            pane: pane, tmuxSocket: tmuxSocket, zedProject: zedProject,
+            pane: pane, tmuxSocket: tmuxSocket, zedProject: zedProject, rex: rex,
             push: push, pushOverrides: pushOverrides, details: details)
         try result.validate()
         return result
@@ -55,6 +74,7 @@ public struct NotificationMessage: Codable, Sendable, Equatable {
     public var pane: String?
     public var tmuxSocket: String?
     public var zedProject: String?
+    public var rex: RexNotificationContext?
     public var push: Bool
     public var pushOverrides: NtfyOverrides?
     public var details: Data?
@@ -62,6 +82,7 @@ public struct NotificationMessage: Codable, Sendable, Equatable {
     public init(
         title: String, subtitle: String? = nil, message: String, group: String,
         pane: String? = nil, tmuxSocket: String? = nil, zedProject: String? = nil,
+        rex: RexNotificationContext? = nil,
         push: Bool = false,
         pushOverrides: NtfyOverrides? = nil, details: Data? = nil
     ) {
@@ -72,6 +93,7 @@ public struct NotificationMessage: Codable, Sendable, Equatable {
         self.pane = pane
         self.tmuxSocket = tmuxSocket
         self.zedProject = zedProject
+        self.rex = rex
         self.push = push
         self.pushOverrides = pushOverrides
         self.details = details
@@ -92,6 +114,12 @@ public struct NotificationMessage: Codable, Sendable, Equatable {
             }
         }
         if let zedProject { try ZedProjectTarget.validatePath(zedProject) }
+        if let rex {
+            try rex.validate()
+            guard pane == nil, tmuxSocket == nil, zedProject == nil else {
+                throw VoiceNotificationError("choose a Rex target or a tmux/Zed target")
+            }
+        }
         if let details { _ = try NotificationDetails.text(from: details) }
     }
 
@@ -146,6 +174,8 @@ public enum NotificationRPCRequest: Codable, Sendable {
     // A prior app must reject full-text posts rather than silently discarding
     // the text needed by the Details action.
     case postWithDetails(NotificationMessage)
+    // An older app must reject a Rex post rather than silently discarding its target.
+    case postWithRex(NotificationMessage)
     case configurePush(NtfyConfiguration)
 }
 

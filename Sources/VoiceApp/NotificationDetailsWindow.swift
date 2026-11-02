@@ -112,6 +112,7 @@ private struct NotificationDestinationButton: View {
 
     private var title: String {
         switch destination {
+        case .rex: "Open in Rex"
         case .zed: "Open in Zed"
         case .terminal: "Go to Terminal"
         }

@@ -132,5 +132,8 @@ custom preview. If the prepared text exceeds the 8 MiB Details limit, speech
 continues and the notification keeps only its short preview.
 
 Use `--notify-zed-project /absolute/project/path` to attach a Zed project.
+Native Rex sessions are detected automatically when no tmux or Zed target takes
+priority. See [Rex notification targeting](voice-notify.md#native-rex-sessions)
+for the `--notify-rex-*` overrides and local-server limits.
 The [notification guide](voice-notify.md#zed-projects) explains window-selection
 limits, metadata overrides, speech-lock behavior, and optional phone push.

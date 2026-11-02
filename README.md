@@ -192,8 +192,8 @@ narration, playback controls, and tuning.
 
 ## Agent notifications
 
-`voice-notify` sends native Mac notifications, with tmux and Zed project click
-targets and optional phone push through ntfy:
+`voice-notify` sends native Mac notifications, with tmux, native Rex, and Zed
+project click targets and optional phone push through ntfy:
 
 ```fish
 voice-notify --title "Build · Voice" --message "All checks passed." \

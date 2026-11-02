@@ -88,4 +88,29 @@ final class VoiceNotifyTests: XCTestCase {
         }
     }
 
+    func testNativeRexFlagsAndDefaults() throws {
+        let session = "session:00000000-0000-0000-0000-000000000001"
+        let block = "block:00000000-0000-0000-0000-000000000002"
+        let environment = [
+            "REX_SESSION": session, "REX_BLOCK": block, "REX_SERVER": "/tmp/rex.sock",
+        ]
+        let automatic = try PostNotification.parse(required + ["--no-pane"])
+        XCTAssertEqual(try automatic.makeMessage(environment: environment).rex?.block, block)
+        let disabled = try PostNotification.parse(required + ["--no-pane", "--no-rex"])
+        XCTAssertNil(try disabled.makeMessage(environment: environment).rex)
+        let explicit = [
+            "--rex-session", session, "--rex-block", block, "--rex-server", "/tmp/rex.sock",
+        ]
+        let command = try PostNotification.parse(required + explicit)
+        XCTAssertEqual(try command.makeMessage(environment: [:]).rex?.session, session)
+        for flags in [
+            explicit + ["--pane", "%3"], explicit + ["--no-rex"],
+            ["--rex-session", "short", "--rex-block", block],
+            explicit + ["--rex-client", "ambiguous-label"],
+        ] {
+            XCTAssertThrowsError(try PostNotification.parse(required + flags)) {
+                XCTAssertEqual(VoiceNotify.exitCode(for: $0).rawValue, 64)
+            }
+        }
+    }
 }

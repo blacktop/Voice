@@ -62,12 +62,18 @@ public final class VoiceNotificationAppDelegate: NSObject, NSApplicationDelegate
                 try keychain.save(configuration)
                 return NotificationRPCResponse()
             } catch { return NotificationRPCResponse(failures: [error.localizedDescription]) }
-        case .post(let message), .postWithProject(let message), .postWithDetails(let message):
+        case .post(let message), .postWithProject(let message), .postWithDetails(let message),
+            .postWithRex(let message):
             do { try message.validate() } catch {
                 return NotificationRPCResponse(failures: [error.localizedDescription])
             }
             var click = NotificationClickTarget()
             var clickFailures: [String] = []
+            if let rex = message.rex {
+                do { click.rex = try await RexNotification.capture(rex) } catch {
+                    clickFailures.append("Rex: \(error.localizedDescription)")
+                }
+            }
             if let pane = message.pane {
                 do {
                     click.tmux = try await TmuxNotification.capture(
@@ -171,7 +177,7 @@ public final class VoiceNotificationAppDelegate: NSObject, NSApplicationDelegate
         } catch {
             await reportClickFailure(
                 error.localizedDescription,
-                subtitle: "Could not focus Zed",
+                subtitle: target.rex == nil ? "Could not focus Zed" : "Could not focus Rex",
                 identifier: identifier)
         }
     }

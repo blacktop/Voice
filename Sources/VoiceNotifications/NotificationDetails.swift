@@ -14,6 +14,7 @@ public struct NotificationDetails: Equatable, Sendable {
     let clickTarget: NotificationClickTarget?
 
     public var destination: NotificationDestination? {
+        if clickTarget?.rex != nil { return .rex }
         if clickTarget?.zedProject != nil { return .zed }
         if clickTarget?.tmux != nil { return .terminal }
         return nil
@@ -67,6 +68,7 @@ public struct NotificationDetails: Equatable, Sendable {
 }
 
 public enum NotificationDestination: Equatable, Sendable {
+    case rex
     case zed
     case terminal
 }

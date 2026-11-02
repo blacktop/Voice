@@ -39,6 +39,7 @@ struct ZedProjectTarget: Codable, Sendable, Equatable {
 struct NotificationClickTarget: Codable, Sendable, Equatable {
     var tmux: TmuxNotificationTarget?
     var zedProject: ZedProjectTarget?
+    var rex: RexNotificationTarget?
 
     static func decode(_ userInfo: [AnyHashable: Any]) -> Self? {
         if let data = userInfo["voice-click"] as? Data {
@@ -56,16 +57,25 @@ struct NotificationClickTarget: Codable, Sendable, Equatable {
         try await activate(
             selectTmux: TmuxNotification.select,
             openZed: ZedNotification.activate,
-            raiseHost: TmuxNotification.raiseHost)
+            raiseHost: TmuxNotification.raiseHost,
+            openRex: RexNotification.activate)
     }
 
     @MainActor
     func activate(
         selectTmux: (TmuxNotificationTarget) async -> TmuxProcessIdentity?,
         openZed: (ZedProjectTarget) async throws -> Void,
-        raiseHost: (TmuxProcessIdentity) -> Void
+        raiseHost: (TmuxProcessIdentity) -> Void,
+        openRex: (RexNotificationTarget) async throws -> Void = RexNotification.activate
     ) async throws {
         try Task.checkCancellation()
+        if let rex {
+            guard tmux == nil, zedProject == nil else {
+                throw VoiceNotificationError("notification has conflicting click targets")
+            }
+            try await openRex(rex)
+            return
+        }
         var client: TmuxProcessIdentity?
         if let tmux { client = await selectTmux(tmux) }
         try Task.checkCancellation()

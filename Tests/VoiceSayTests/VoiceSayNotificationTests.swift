@@ -93,6 +93,38 @@ final class VoiceSayNotificationTests: XCTestCase {
         XCTAssertFalse(message.push)
     }
 
+    func testNativeRexNotificationOptionsAndGroup() throws {
+        let session = "session:00000000-0000-0000-0000-000000000001"
+        let block = "block:00000000-0000-0000-0000-000000000002"
+        let environment = [
+            "REX_SESSION": session, "REX_BLOCK": block, "REX_SERVER": "/tmp/rex.sock",
+        ]
+        let options = try VoiceSayNotificationOptions.parse(["--notify", "--notify-no-pane"])
+        let message = try XCTUnwrap(
+            options.message(previewParts: ["hello"], environment: environment))
+        XCTAssertEqual(message.rex?.block, block)
+        XCTAssertEqual(message.group, "voice-say:" + block)
+        let disabled = try VoiceSayNotificationOptions.parse([
+            "--notify", "--notify-no-pane", "--notify-no-rex",
+        ])
+        XCTAssertNil(try disabled.message(previewParts: ["hello"], environment: environment)?.rex)
+        for flags in [
+            ["--notify-rex-session", session, "--notify-rex-block", block],
+            [
+                "--notify", "--notify-rex-session", session, "--notify-rex-block", block,
+                "--notify-pane", "%2",
+            ],
+            [
+                "--notify", "--notify-rex-session", session, "--notify-rex-block", block,
+                "--notify-no-rex",
+            ],
+        ] {
+            XCTAssertThrowsError(try VoiceSayNotificationOptions.parse(flags)) {
+                XCTAssertEqual(VoiceSay.exitCode(for: $0).rawValue, 64)
+            }
+        }
+    }
+
     func testSkippedSpeechDoesNotPost() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: url) }

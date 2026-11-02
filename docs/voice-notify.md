@@ -47,7 +47,7 @@ can still take hours; Stop cancels the current section and the remaining text.
 Neural voices may need time to generate audio; the window shows **Preparing
 audio…** until playback starts. **Stop** or closing the window cancels playback.
 If another `voice-say` is speaking, wait for it to finish and press Speak again.
-When the notification has a destination, **Open in Zed** or **Go to Terminal**
+When the notification has a destination, **Open in Rex**, **Open in Zed**, or **Go to Terminal**
 follows the same target as clicking the notification itself. The window remains
 available for reading or replaying the message.
 
@@ -83,6 +83,46 @@ to another session.
 64 for invalid arguments, and 1 for delivery or configuration failure. A
 successful exit means the request was accepted; it doesn't prove that someone
 saw the alert.
+
+## Native Rex sessions
+
+Inside a local Rex terminal, Voice can attach the session and block identified
+by `REX_SESSION` and `REX_BLOCK`. An existing tmux pane, explicit tmux socket,
+or explicit Zed project keeps priority. Use `--no-pane` when you want the native Rex destination even
+if the shell inherited tmux context:
+
+```fish
+voice-notify --title "Build · Voice" --message "Ready for review." \
+    --group voice-rex-build --no-pane
+```
+
+For an explicit target, use `--rex-session`, `--rex-block`, and optionally
+`--rex-server` and `--rex-client`. Session, block, and client values must be
+full Rex IDs, not labels or suffixes. `--rex-server` accepts a local Unix socket
+path or `unix:///…` URL and defaults to `REX_SERVER`, then the local Mac server
+socket. `--rex-client` defaults to `REX_CLIENT` when supplied. Remote server
+addresses are not supported in this version.
+
+```fish
+voice-notify --title "Build · Voice" --message "Ready for review." \
+    --group voice-rex-build --rex-session "$REX_SESSION" \
+    --rex-block "$REX_BLOCK" --rex-server "$REX_SERVER"
+```
+
+Explicit Rex options cannot be combined with a tmux or Zed target. `--no-rex`
+disables automatic Rex targeting; `--no-pane` continues to affect only tmux.
+Install Voice and the CLI together: older apps reject Rex-aware requests.
+
+At posting, Voice records the private socket, Rex server instance, and full
+session/block IDs. At click time, it re-resolves the block's current window,
+focuses that block, and asks one connected Rex Mac client to show it. It refuses
+a restarted server, missing or detached block, or ambiguous local clients.
+Use a full `--rex-client` ID from `rex client ls --json` when more than one local
+app matches. The Rex app must be running and connected; Voice does not start or
+reconfigure servers, create panes, or send terminal input. Both the notification
+body and **Open in Rex** in Details use this route.
+Rex must also allow client actions: turn on **Remote Control** in its
+**Settings → Rex Server** panel. If it is off, Voice reports Rex's refusal.
 
 ## Zed projects
 
@@ -125,7 +165,10 @@ Skipped speech posts nothing. Notification delivery runs alongside speech,
 and the command waits for its result after releasing the lock. Use
 `--notify-title`, `--notify-subtitle`, `--notify-message`, `--notify-group`,
 `--notify-pane`, `--notify-no-pane`, `--notify-tmux-socket`, and
-`--notify-zed-project` to override the notification fields. A delivery failure
+`--notify-zed-project` to override the notification fields. The corresponding
+`--notify-rex-session`, `--notify-rex-block`, `--notify-rex-server`,
+`--notify-rex-client`, and `--notify-no-rex` options control native Rex targets.
+A delivery failure
 is printed without interrupting speech, then the command exits nonzero.
 
 ## Phone notifications

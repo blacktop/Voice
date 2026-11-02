@@ -18,7 +18,7 @@
 | Voice-clone reference clip | Local file chosen by the user, read by the local Qwen3-TTS Base model | Never uploaded; conditioned in memory per session; the file path and transcript persist in `UserDefaults` |
 | Local history | App support file | Off by default; AES-GCM; bounded to 500 entries; disabling history does not delete existing data |
 | History key | macOS Keychain | `WhenUnlockedThisDeviceOnly` |
-| Agent notification preview, full text for Details/replay, tmux target, and optional Zed project path | Local signed Voice app over a private Unix socket, then macOS Notification Center | System-managed notification retention; repeated group replaces the prior notification; full text is bounded to 8 MiB. System-voice replay passes text to macOS `say` through a private temporary file that is unlinked before use. |
+| Agent notification preview, full text for Details/replay, tmux or Rex target, and optional Zed project path | Local signed Voice app over a private Unix socket, then macOS Notification Center | System-managed notification retention; repeated group replaces the prior notification; full text is bounded to 8 MiB. System-voice replay passes text to macOS `say` through a private temporary file that is unlinked before use. |
 | Optional phone notification | Explicitly configured ntfy HTTPS server | Provider configuration and retention policy apply; no request without `--push` or `--notify-push` |
 | ntfy destination and access token | Voice's macOS Keychain | `WhenUnlockedThisDeviceOnly`; replaced by `configure-push`; not synchronized |
 | Export | User-selected path | Explicit user action only |
@@ -45,7 +45,8 @@ text cannot submit a terminal command by including a line break.
 
 Voice does not inspect shell startup files or unrelated credentials. The
 notification CLIs read only their explicit `VOICE_NOTIFY_NTFY_*` overrides and
-the `TMUX`/`TMUX_PANE` context needed for click handling. The MLX downloader uses
+the `TMUX`/`TMUX_PANE` and `REX_SESSION`/`REX_BLOCK`/`REX_SERVER`/`REX_CLIENT`
+context needed for click handling. The MLX downloader uses
 public Hugging Face infrastructure,
 including storage and CDN endpoints, with no bearer token and an app-specific
 Application Support model store that is excluded from backups. Qwen and Granite
@@ -68,6 +69,11 @@ process identity before selecting the pane. A Zed target stores a canonical loca
 directory and passes it to Zed's bundled CLI only when the notification is
 clicked. Voice does not inspect project contents or store an arbitrary click
 command. Opening a project is subject to Zed's own settings and privacy policy.
+Native Rex targets retain full session/block IDs, a private local Unix socket,
+the Rex server instance, and an optional exact Mac-client ID. Voice invokes only
+fixed Rex control API methods through the installed CLI, with output and time
+limits. It does not start a server, send terminal input, connect to a remote Rex
+host, or store Rex credentials. Rex target metadata stays on the Mac.
 
 With phone push enabled, the selected ntfy provider receives the title, body,
 subtitle, topic, bearer token, and connection metadata. Its operators and server
@@ -77,7 +83,7 @@ use an upstream ntfy server and Apple's push infrastructure to wake the iOS app;
 the [documented relay](https://docs.ntfy.sh/config/#ios-instant-notifications)
 sends a poll request containing the message ID, and the phone then fetches the
 message from the configured server. Voice sends no audio, full Details text,
-tmux click target, or Zed project path through this path. HTTPS redirects are
+tmux/Rex click target, or Zed project path through this path. HTTPS redirects are
 rejected, and a server override cannot reuse a saved token for a different
 destination.
 

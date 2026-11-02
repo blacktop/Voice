@@ -334,7 +334,8 @@ public enum NotificationClient {
         -> (NotificationRPCRequest, String?)
     {
         switch request {
-        case .post(var message), .postWithProject(var message), .postWithDetails(var message):
+        case .post(var message), .postWithProject(var message), .postWithDetails(var message),
+            .postWithRex(var message):
             try message.validate()
             guard message.push else {
                 message.pushOverrides = nil
@@ -355,6 +356,7 @@ public enum NotificationClient {
     }
 
     private static func postRequest(_ message: NotificationMessage) -> NotificationRPCRequest {
+        if message.rex != nil { return .postWithRex(message) }
         if message.details != nil { return .postWithDetails(message) }
         return message.zedProject == nil ? .post(message) : .postWithProject(message)
     }

@@ -17,6 +17,14 @@ struct VoiceSayNotificationOptions: ParsableArguments {
     @Option(help: "Notification tmux socket.", completion: .file()) var notifyTmuxSocket: String?
     @Option(help: "Absolute local project directory to focus in Zed.", completion: .directory)
     var notifyZedProject: String?
+    @Option(help: "Full notification Rex session ID (default: REX_SESSION).")
+    var notifyRexSession: String?
+    @Option(help: "Full notification Rex block ID (default: REX_BLOCK).")
+    var notifyRexBlock: String?
+    @Option(help: "Local Rex Unix socket (default: REX_SERVER).", completion: .file())
+    var notifyRexServer: String?
+    @Option(help: "Full local Rex client ID.") var notifyRexClient: String?
+    @Flag(help: "Omit the notification's native Rex click target.") var notifyNoRex = false
     @Flag(help: "Also send the notification through ntfy.") var notifyPush = false
 
     mutating func validate() throws {
@@ -27,10 +35,22 @@ struct VoiceSayNotificationOptions: ParsableArguments {
         if notifyPane != nil, notifyNoPane {
             throw ValidationError("choose --notify-pane or --notify-no-pane")
         }
+        let explicitRex =
+            notifyRexSession != nil || notifyRexBlock != nil
+            || notifyRexServer != nil || notifyRexClient != nil
+        if explicitRex, notifyNoRex {
+            throw ValidationError("choose a Rex target or --notify-no-rex")
+        }
+        if explicitRex, notifyPane != nil || notifyTmuxSocket != nil || notifyZedProject != nil {
+            throw ValidationError(
+                "choose a Rex target or the --notify-pane/--notify-zed-project target")
+        }
         if !notify,
             notifyTitle != nil || notifySubtitle != nil || notifyMessage != nil
                 || notifyGroup != nil || notifyPane != nil || notifyNoPane
                 || notifyTmuxSocket != nil || notifyZedProject != nil || notifyPush
+                || notifyRexSession != nil || notifyRexBlock != nil || notifyRexServer != nil
+                || notifyRexClient != nil || notifyNoRex
         {
             throw ValidationError("notification options require --notify")
         }
@@ -47,13 +67,15 @@ struct VoiceSayNotificationOptions: ParsableArguments {
         guard notify else { return nil }
         let context = try NotificationContext(
             pane: notifyPane, noPane: notifyNoPane, tmuxSocket: notifyTmuxSocket,
-            zedProject: notifyZedProject, push: notifyPush, environment: environment)
+            zedProject: notifyZedProject, rexSession: notifyRexSession, rexBlock: notifyRexBlock,
+            rexServer: notifyRexServer, rexClient: notifyRexClient, noRex: notifyNoRex,
+            push: notifyPush, environment: environment)
         let preview = notifyMessage ?? NotificationMessage.preview(parts: previewParts)
         let details = try NotificationDetails.encodeIfFits(parts: previewParts)
         return try context.message(
             title: notifyTitle ?? "Voice", subtitle: notifySubtitle,
             message: preview,
-            group: notifyGroup ?? "voice-say:\(context.pane ?? "global")",
+            group: notifyGroup ?? "voice-say:\(context.pane ?? context.rex?.block ?? "global")",
             details: details)
     }
 }
